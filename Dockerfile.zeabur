@@ -1,0 +1,84 @@
+# syntax=docker/dockerfile:1
+# Zeabur 部署专用 Dockerfile
+# 构建前端
+FROM --platform=$BUILDPLATFORM docker.io/library/golang:1.26-alpine3.23 AS frontend-build
+
+RUN apk --no-cache add build-base git nodejs pnpm
+WORKDIR /src
+COPY package.json pnpm-lock.yaml .npmrc ./
+RUN --mount=type=cache,target=/root/.local/share/pnpm/store pnpm install --frozen-lockfile
+COPY --exclude=.git/ . .
+RUN make frontend
+
+# 构建后端
+FROM docker.io/library/golang:1.26-alpine3.23 AS build-env
+
+ARG GITEA_VERSION=dev
+ARG TAGS="sqlite sqlite_unlock_notify"
+ENV TAGS="bindata timetzdata $TAGS"
+
+RUN apk --no-cache add build-base git
+
+WORKDIR ${GOPATH}/src/code.gitea.io/gitea
+COPY go.mod go.sum ./
+RUN go mod download
+COPY --exclude=.git/ . .
+COPY --from=frontend-build /src/public/assets public/assets
+
+# 尝试生成版本信息：如果 .git 存在则使用，否则使用 GITEA_VERSION 构建参数
+RUN if [ -d .git ]; then \
+      make backend; \
+    else \
+      echo "Warning: .git directory not found, using GITEA_VERSION=${GITEA_VERSION}" && \
+      GITEA_VERSION=${GITEA_VERSION} make backend; \
+    fi
+
+# 运行时镜像（rootless，适合 PaaS）
+FROM docker.io/library/alpine:3.23
+
+EXPOSE 3000
+
+RUN apk --no-cache add \
+    bash \
+    ca-certificates \
+    curl \
+    gettext \
+    git \
+    gnupg \
+    tzdata
+
+# 创建非 root 用户
+RUN addgroup -S -g 1000 git && \
+    adduser -S -H -D \
+    -h /var/lib/gitea/git \
+    -s /bin/bash \
+    -u 1000 \
+    -G git \
+    git && \
+    mkdir -p /var/lib/gitea /etc/gitea && \
+    chown git:git /var/lib/gitea /etc/gitea
+
+# 复制构建产物
+COPY --from=build-env /go/src/code.gitea.io/gitea/gitea /app/gitea/gitea
+COPY --from=build-env /go/src/code.gitea.io/gitea/docker/rootless/etc/templates /etc/templates
+COPY --from=build-env /go/src/code.gitea.io/gitea/docker/rootless/usr/local/bin/environment-to-ini /usr/local/bin/environment-to-ini
+COPY --from=build-env /go/src/code.gitea.io/gitea/docker/rootless/usr/local/bin/gitea /usr/local/bin/gitea
+COPY --from=build-env /go/src/code.gitea.io/gitea/docker/rootless/usr/local/bin/docker-setup.sh /usr/local/bin/docker-setup.sh
+COPY --from=build-env /go/src/code.gitea.io/gitea/docker/rootless/usr/local/bin/docker-entrypoint.sh /usr/local/bin/docker-entrypoint.sh
+
+# 设置权限
+RUN chmod 755 /app/gitea/gitea /usr/local/bin/*
+
+USER 1000:1000
+ENV GITEA_WORK_DIR=/var/lib/gitea
+ENV GITEA_CUSTOM=/var/lib/gitea/custom
+ENV GITEA_TEMP=/tmp/gitea
+ENV TMPDIR=/tmp/gitea
+ENV GITEA_APP_INI=/etc/gitea/app.ini
+ENV HOME=/var/lib/gitea/git
+
+VOLUME ["/var/lib/gitea", "/etc/gitea"]
+WORKDIR /var/lib/gitea
+
+ENTRYPOINT ["/usr/local/bin/docker-entrypoint.sh"]
+CMD []

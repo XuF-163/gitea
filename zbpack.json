@@ -1,0 +1,7 @@
+{
+  "dockerfile": "Dockerfile.zeabur",
+  "app_dir": "/",
+  "install": {
+    "expose_port": 3000
+  }
+}
