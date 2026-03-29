@@ -180,6 +180,9 @@ var (
 	Actions ObjectStorage = uninitializedStorage
 	// ActionsArtifacts Artifacts represents actions artifacts storage
 	ActionsArtifacts ObjectStorage = uninitializedStorage
+
+	// Backup represents backup storage
+	Backup ObjectStorage = uninitializedStorage
 )
 
 // Init init the storage
@@ -192,6 +195,7 @@ func Init() error {
 		initRepoArchives,
 		initPackages,
 		initActions,
+		initBackup,
 	} {
 		if err := f(); err != nil {
 			return err
@@ -273,5 +277,15 @@ func initActions() (err error) {
 	}
 	log.Info("Initialising ActionsArtifacts storage with type: %s", setting.Actions.ArtifactStorage.Type)
 	ActionsArtifacts, err = NewStorage(setting.Actions.ArtifactStorage.Type, setting.Actions.ArtifactStorage)
+	return err
+}
+
+func initBackup() (err error) {
+	if setting.Backup.WebDevStorage == nil {
+		Backup = discardStorage("Backup storage is not configured")
+		return nil
+	}
+	log.Info("Initialising Backup storage with type: %s", setting.Backup.WebDevStorage.Type)
+	Backup, err = NewStorage(setting.Backup.WebDevStorage.Type, setting.Backup.WebDevStorage)
 	return err
 }

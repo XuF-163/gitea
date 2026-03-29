@@ -1,0 +1,35 @@
+<h4 class="ui top attached header">
+	{{ctx.Locale.Tr "admin.config.backup_config"}}
+</h4>
+<div class="ui attached table segment">
+	<p>{{ctx.Locale.Tr "admin.config.backup_config_desc"}}</p>
+	<dl class="admin-dl-horizontal">
+		<dt>{{ctx.Locale.Tr "admin.config.backup_storage_type"}}</dt>
+		<dd>{{.Backup.WebDevStorage.Type}}</dd>
+
+		{{if eq .Backup.WebDevStorage.Type "webdav"}}
+		<dt>{{ctx.Locale.Tr "admin.config.backup_webdav_url"}}</dt>
+		<dd>{{.Backup.WebDevStorage.WebDAVConfig.URL}}</dd>
+		{{end}}
+
+		{{if eq .Backup.WebDevStorage.Type "local"}}
+		<dt>{{ctx.Locale.Tr "admin.config.backup_path"}}</dt>
+		<dd>{{.Backup.WebDevStorage.Path}}</dd>
+		{{end}}
+
+		<dt>{{ctx.Locale.Tr "admin.config.backup_format"}}</dt>
+		<dd>{{.Backup.Format}}</dd>
+
+		<dt>{{ctx.Locale.Tr "admin.config.backup_skip_lfs"}}</dt>
+		<dd>{{svg (Iif .Backup.SkipLFS "octicon-check" "octicon-x")}}</dd>
+
+		<dt>{{ctx.Locale.Tr "admin.config.backup_skip_attachments"}}</dt>
+		<dd>{{svg (Iif .Backup.SkipAttachments "octicon-check" "octicon-x")}}</dd>
+
+		<dt>{{ctx.Locale.Tr "admin.config.backup_skip_packages"}}</dt>
+		<dd>{{svg (Iif .Backup.SkipPackages "octicon-check" "octicon-x")}}</dd>
+
+		<dt>{{ctx.Locale.Tr "admin.config.backup_skip_db"}}</dt>
+		<dd>{{svg (Iif .Backup.SkipDB "octicon-check" "octicon-x")}}</dd>
+	</dl>
+</div>

@@ -239,4 +239,5 @@ func initExtendedTasks() {
 	registerDeleteOldSystemNotices()
 	registerGCLFS()
 	registerRebuildIssueIndexer()
+	registerBackupTask()
 }

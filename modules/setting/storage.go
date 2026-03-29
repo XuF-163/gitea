@@ -21,12 +21,15 @@ const (
 	MinioStorageType StorageType = "minio"
 	// AzureBlobStorageType is the type descriptor for azure blob storage
 	AzureBlobStorageType StorageType = "azureblob"
+	// WebDAVStorageType is the type descriptor for webdav storage
+	WebDAVStorageType StorageType = "webdav"
 )
 
 var storageTypes = []StorageType{
 	LocalStorageType,
 	MinioStorageType,
 	AzureBlobStorageType,
+	WebDAVStorageType,
 }
 
 // IsValidStorageType returns true if the given storage type is valid
@@ -78,19 +81,35 @@ func (cfg *AzureBlobStorageConfig) ToShadow() {
 	}
 }
 
+// WebDAVStorageConfig represents the configuration for a WebDAV storage
+type WebDAVStorageConfig struct {
+	URL      string `ini:"WEBDAV_URL" json:",omitempty"`
+	Username string `ini:"WEBDAV_USERNAME" json:",omitempty"`
+	Password string `ini:"WEBDAV_PASSWORD" json:",omitempty"`
+	Timeout  int    `ini:"WEBDAV_TIMEOUT" json:",omitempty"`
+}
+
+func (cfg *WebDAVStorageConfig) ToShadow() {
+	if cfg.Password != "" {
+		cfg.Password = "******"
+	}
+}
+
 // Storage represents configuration of storages
 type Storage struct {
-	Type            StorageType            // local or minio or azureblob
+	Type            StorageType            // local or minio or azureblob or webdav
 	Path            string                 `json:",omitempty"` // for local type
 	TemporaryPath   string                 `json:",omitempty"`
 	MinioConfig     MinioStorageConfig     // for minio type
 	AzureBlobConfig AzureBlobStorageConfig // for azureblob type
+	WebDAVConfig    WebDAVStorageConfig    // for webdav type
 }
 
 func (storage *Storage) ToShadowCopy() Storage {
 	shadowStorage := *storage
 	shadowStorage.MinioConfig.ToShadow()
 	shadowStorage.AzureBlobConfig.ToShadow()
+	shadowStorage.WebDAVConfig.ToShadow()
 	return shadowStorage
 }
 
@@ -118,6 +137,10 @@ func getDefaultStorageSection(rootCfg ConfigProvider) ConfigSection {
 	storageSec.Key("AZURE_BLOB_ACCOUNT_NAME").MustString("")
 	storageSec.Key("AZURE_BLOB_ACCOUNT_KEY").MustString("")
 	storageSec.Key("AZURE_BLOB_CONTAINER").MustString("gitea")
+	storageSec.Key("WEBDAV_URL").MustString("")
+	storageSec.Key("WEBDAV_USERNAME").MustString("")
+	storageSec.Key("WEBDAV_PASSWORD").MustString("")
+	storageSec.Key("WEBDAV_TIMEOUT").MustInt(30)
 	return storageSec
 }
 
@@ -143,6 +166,8 @@ func getStorage(rootCfg ConfigProvider, name, typ string, sec ConfigSection) (*S
 		return getStorageForMinio(targetSec, overrideSec, tp, name)
 	case string(AzureBlobStorageType):
 		return getStorageForAzureBlob(targetSec, overrideSec, tp, name)
+	case string(WebDAVStorageType):
+		return getStorageForWebDAV(targetSec, overrideSec, tp, name)
 	default:
 		return nil, fmt.Errorf("unsupported storage type %q", targetType)
 	}
@@ -338,5 +363,22 @@ func getStorageForAzureBlob(targetSec, overrideSec ConfigSection, tp targetSecTy
 	} else {
 		storage.AzureBlobConfig.BasePath = defaultPath
 	}
+	return &storage, nil
+}
+
+func getStorageForWebDAV(targetSec, overrideSec ConfigSection, tp targetSecType, name string) (*Storage, error) {
+	var storage Storage
+	storage.Type = StorageType(targetSec.Key("STORAGE_TYPE").String())
+	if err := targetSec.MapTo(&storage.WebDAVConfig); err != nil {
+		return nil, fmt.Errorf("map WebDAV config failed: %v", err)
+	}
+
+	if overrideSec != nil {
+		storage.WebDAVConfig.URL = ConfigSectionKeyString(overrideSec, "WEBDAV_URL", storage.WebDAVConfig.URL)
+		storage.WebDAVConfig.Username = ConfigSectionKeyString(overrideSec, "WEBDAV_USERNAME", storage.WebDAVConfig.Username)
+		storage.WebDAVConfig.Password = ConfigSectionKeyString(overrideSec, "WEBDAV_PASSWORD", storage.WebDAVConfig.Password)
+		storage.WebDAVConfig.Timeout = overrideSec.Key("WEBDAV_TIMEOUT").MustInt(storage.WebDAVConfig.Timeout)
+	}
+
 	return &storage, nil
 }

@@ -189,6 +189,7 @@ func ConfigSettings(ctx *context.Context) {
 	ctx.Data["Title"] = ctx.Tr("admin.config_settings")
 	ctx.Data["PageIsAdminConfig"] = true
 	ctx.Data["PageIsAdminConfigSettings"] = true
+	ctx.Data["Backup"] = setting.Backup
 	ctx.HTML(http.StatusOK, tplConfigSettings)
 }
 
