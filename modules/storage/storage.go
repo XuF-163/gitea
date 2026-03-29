@@ -225,7 +225,7 @@ func initAvatars() (err error) {
 
 func initAttachments() (err error) {
 	if !setting.Attachment.Enabled {
-		Attachments = discardStorage("Attachment isn't enabled")
+		Attachments = &discardStorage{reason: "Attachment isn't enabled"}
 		return nil
 	}
 	log.Info("Initialising Attachment storage with type: %s", setting.Attachment.Storage.Type)
@@ -235,7 +235,7 @@ func initAttachments() (err error) {
 
 func initLFS() (err error) {
 	if !setting.LFS.StartServer {
-		LFS = discardStorage("LFS isn't enabled")
+		LFS = &discardStorage{reason: "LFS isn't enabled"}
 		return nil
 	}
 	log.Info("Initialising LFS storage with type: %s", setting.LFS.Storage.Type)
@@ -257,7 +257,7 @@ func initRepoArchives() (err error) {
 
 func initPackages() (err error) {
 	if !setting.Packages.Enabled {
-		Packages = discardStorage("Packages isn't enabled")
+		Packages = &discardStorage{reason: "Packages isn't enabled"}
 		return nil
 	}
 	log.Info("Initialising Packages storage with type: %s", setting.Packages.Storage.Type)
@@ -267,8 +267,8 @@ func initPackages() (err error) {
 
 func initActions() (err error) {
 	if !setting.Actions.Enabled {
-		Actions = discardStorage("Actions isn't enabled")
-		ActionsArtifacts = discardStorage("ActionsArtifacts isn't enabled")
+		Actions = &discardStorage{reason: "Actions isn't enabled"}
+		ActionsArtifacts = &discardStorage{reason: "ActionsArtifacts isn't enabled"}
 		return nil
 	}
 	log.Info("Initialising Actions storage with type: %s", setting.Actions.LogStorage.Type)
@@ -281,11 +281,11 @@ func initActions() (err error) {
 }
 
 func initBackup() (err error) {
-	if setting.Backup.WebDevStorage == nil {
-		Backup = discardStorage("Backup storage is not configured")
+	if setting.Backup.WebDAVStorage == nil {
+		Backup = &discardStorage{reason: "Backup storage is not configured"}
 		return nil
 	}
-	log.Info("Initialising Backup storage with type: %s", setting.Backup.WebDevStorage.Type)
-	Backup, err = NewStorage(setting.Backup.WebDevStorage.Type, setting.Backup.WebDevStorage)
+	log.Info("Initialising Backup storage with type: %s", setting.Backup.WebDAVStorage.Type)
+	Backup, err = NewStorage(setting.Backup.WebDAVStorage.Type, setting.Backup.WebDAVStorage)
 	return err
 }

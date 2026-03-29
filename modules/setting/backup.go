@@ -9,9 +9,9 @@ import (
 
 // Backup represents the backup configuration
 var Backup = struct {
-	WebDevStorage *Storage
-	Format        string
-	SkipLFS       bool
+	WebDAVStorage   *Storage
+	Format          string
+	SkipLFS         bool
 	SkipAttachments bool
 	SkipPackages    bool
 	SkipDB          bool
@@ -32,12 +32,12 @@ func loadBackupFrom(rootCfg ConfigProvider) error {
 	Backup.SkipDB = sec.Key("SKIP_DB").MustBool(false)
 
 	// Load backup storage configuration
-	Backup.WebDevStorage, err = getStorage(rootCfg, "backup", "", sec)
+	Backup.WebDAVStorage, err = getStorage(rootCfg, "backup", "", sec)
 	if err != nil {
 		return err
 	}
 
-	log.Info("Backup storage type: %s", Backup.WebDevStorage.Type)
+	log.Info("Backup storage type: %s", Backup.WebDAVStorage.Type)
 
 	return nil
 }

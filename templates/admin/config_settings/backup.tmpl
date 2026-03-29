@@ -5,16 +5,16 @@
 	<p>{{ctx.Locale.Tr "admin.config.backup_config_desc"}}</p>
 	<dl class="admin-dl-horizontal">
 		<dt>{{ctx.Locale.Tr "admin.config.backup_storage_type"}}</dt>
-		<dd>{{.Backup.WebDevStorage.Type}}</dd>
+		<dd>{{.Backup.WebDAVStorage.Type}}</dd>
 
-		{{if eq .Backup.WebDevStorage.Type "webdav"}}
+		{{if eq .Backup.WebDAVStorage.Type "webdav"}}
 		<dt>{{ctx.Locale.Tr "admin.config.backup_webdav_url"}}</dt>
-		<dd>{{.Backup.WebDevStorage.WebDAVConfig.URL}}</dd>
+		<dd>{{.Backup.WebDAVStorage.WebDAVConfig.URL}}</dd>
 		{{end}}
 
-		{{if eq .Backup.WebDevStorage.Type "local"}}
+		{{if eq .Backup.WebDAVStorage.Type "local"}}
 		<dt>{{ctx.Locale.Tr "admin.config.backup_path"}}</dt>
-		<dd>{{.Backup.WebDevStorage.Path}}</dd>
+		<dd>{{.Backup.WebDAVStorage.Path}}</dd>
 		{{end}}
 
 		<dt>{{ctx.Locale.Tr "admin.config.backup_format"}}</dt>

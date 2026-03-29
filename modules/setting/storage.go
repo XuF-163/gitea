@@ -83,10 +83,11 @@ func (cfg *AzureBlobStorageConfig) ToShadow() {
 
 // WebDAVStorageConfig represents the configuration for a WebDAV storage
 type WebDAVStorageConfig struct {
-	URL      string `ini:"WEBDAV_URL" json:",omitempty"`
-	Username string `ini:"WEBDAV_USERNAME" json:",omitempty"`
-	Password string `ini:"WEBDAV_PASSWORD" json:",omitempty"`
-	Timeout  int    `ini:"WEBDAV_TIMEOUT" json:",omitempty"`
+	URL                string `ini:"WEBDAV_URL" json:",omitempty"`
+	Username           string `ini:"WEBDAV_USERNAME" json:",omitempty"`
+	Password           string `ini:"WEBDAV_PASSWORD" json:",omitempty"`
+	Timeout            int    `ini:"WEBDAV_TIMEOUT" json:",omitempty"`
+	InsecureSkipVerify bool   `ini:"WEBDAV_INSECURE_SKIP_VERIFY" json:",omitempty"`
 }
 
 func (cfg *WebDAVStorageConfig) ToShadow() {
@@ -141,6 +142,7 @@ func getDefaultStorageSection(rootCfg ConfigProvider) ConfigSection {
 	storageSec.Key("WEBDAV_USERNAME").MustString("")
 	storageSec.Key("WEBDAV_PASSWORD").MustString("")
 	storageSec.Key("WEBDAV_TIMEOUT").MustInt(30)
+	storageSec.Key("WEBDAV_INSECURE_SKIP_VERIFY").MustBool(false)
 	return storageSec
 }
 
@@ -378,6 +380,7 @@ func getStorageForWebDAV(targetSec, overrideSec ConfigSection, tp targetSecType,
 		storage.WebDAVConfig.Username = ConfigSectionKeyString(overrideSec, "WEBDAV_USERNAME", storage.WebDAVConfig.Username)
 		storage.WebDAVConfig.Password = ConfigSectionKeyString(overrideSec, "WEBDAV_PASSWORD", storage.WebDAVConfig.Password)
 		storage.WebDAVConfig.Timeout = overrideSec.Key("WEBDAV_TIMEOUT").MustInt(storage.WebDAVConfig.Timeout)
+		storage.WebDAVConfig.InsecureSkipVerify = overrideSec.Key("WEBDAV_INSECURE_SKIP_VERIFY").MustBool(storage.WebDAVConfig.InsecureSkipVerify)
 	}
 
 	return &storage, nil

@@ -10,9 +10,10 @@ import (
 	"os"
 )
 
-var uninitializedStorage = discardStorage("uninitialized storage")
-
-type discardStorage string
+// discardStorage is a placeholder that implements ObjectStorage and rejects all operations.
+type discardStorage struct {
+	reason string
+}
 
 func (s discardStorage) Open(_ string) (Object, error) {
 	return nil, fmt.Errorf("%s", s)
@@ -37,3 +38,11 @@ func (s discardStorage) ServeDirectURL(_, _, _ string, _ *ServeDirectOptions) (*
 func (s discardStorage) IterateObjects(_ string, _ func(string, Object) error) error {
 	return fmt.Errorf("%s", s)
 }
+
+// IsDiscardStorage checks whether the given ObjectStorage is a discardStorage (placeholder)
+func IsDiscardStorage(s ObjectStorage) bool {
+	_, ok := s.(*discardStorage)
+	return ok
+}
+
+var uninitializedStorage ObjectStorage = &discardStorage{reason: "uninitialized storage"}
