@@ -33,52 +33,35 @@ RUN if [ -d .git ]; then \
       GITEA_VERSION=${GITEA_VERSION} make backend; \
     fi
 
-# 运行时镜像（rootless，适合 PaaS）
+# 运行时镜像（PaaS 专用，以 root 运行避免权限问题）
 FROM docker.io/library/alpine:3.23
 
-EXPOSE 3000
+EXPOSE 8080
 
 RUN apk --no-cache add \
     bash \
     ca-certificates \
     curl \
-    gettext \
     git \
     gnupg \
     tzdata
 
-# 创建非 root 用户
-RUN addgroup -S -g 1000 git && \
-    adduser -S -H -D \
-    -h /var/lib/gitea/git \
-    -s /bin/bash \
-    -u 1000 \
-    -G git \
-    git && \
-    mkdir -p /var/lib/gitea /etc/gitea && \
-    chown git:git /var/lib/gitea /etc/gitea
+# 创建数据目录
+RUN mkdir -p /data/gitea/conf /data/gitea/custom /data/git
 
 # 复制构建产物
-COPY --from=build-env /go/src/code.gitea.io/gitea/gitea /app/gitea/gitea
-COPY --from=build-env /go/src/code.gitea.io/gitea/docker/rootless/etc/templates /etc/templates
-COPY --from=build-env /go/src/code.gitea.io/gitea/docker/rootless/usr/local/bin/environment-to-ini /usr/local/bin/environment-to-ini
-COPY --from=build-env /go/src/code.gitea.io/gitea/docker/rootless/usr/local/bin/gitea /usr/local/bin/gitea
-COPY --from=build-env /go/src/code.gitea.io/gitea/docker/rootless/usr/local/bin/docker-setup.sh /usr/local/bin/docker-setup.sh
-COPY --from=build-env /go/src/code.gitea.io/gitea/docker/rootless/usr/local/bin/docker-entrypoint.sh /usr/local/bin/docker-entrypoint.sh
+COPY --from=build-env /go/src/code.gitea.io/gitea/gitea /usr/local/bin/gitea
 
 # 设置权限
-RUN chmod 755 /app/gitea/gitea /usr/local/bin/*
+RUN chmod 755 /usr/local/bin/gitea
 
-USER 1000:1000
-ENV GITEA_WORK_DIR=/var/lib/gitea
-ENV GITEA_CUSTOM=/var/lib/gitea/custom
+ENV GITEA_WORK_DIR=/data/gitea
+ENV GITEA_CUSTOM=/data/gitea/custom
 ENV GITEA_TEMP=/tmp/gitea
 ENV TMPDIR=/tmp/gitea
-ENV GITEA_APP_INI=/etc/gitea/app.ini
-ENV HOME=/var/lib/gitea/git
+ENV HOME=/data/git
 
-VOLUME ["/var/lib/gitea", "/etc/gitea"]
-WORKDIR /var/lib/gitea
+WORKDIR /data/gitea
 
-ENTRYPOINT ["/usr/local/bin/docker-entrypoint.sh"]
-CMD []
+# 直接启动 gitea，监听 8080 端口
+CMD ["gitea", "web", "--port", "8080"]
