@@ -46,8 +46,11 @@ RUN apk --no-cache add \
     gnupg \
     tzdata
 
-# 创建数据目录
-RUN mkdir -p /data/gitea/conf /data/gitea/custom /data/git
+# 创建数据目录（与 GITEA_CUSTOM 和 app.ini 路径一致）
+RUN mkdir -p /data/gitea/custom/conf /data/gitea/data /data/git
+
+# 启动脚本：确保持久化卷中的关键目录存在
+RUN printf '#!/bin/sh\nset -e\nmkdir -p /data/gitea/custom/conf /data/gitea/data /data/git\nexec gitea web --port 8080\n' > /entrypoint.sh && chmod +x /entrypoint.sh
 
 # 复制构建产物
 COPY --from=build-env /go/src/code.gitea.io/gitea/gitea /usr/local/bin/gitea
@@ -63,5 +66,5 @@ ENV HOME=/data/git
 
 WORKDIR /data/gitea
 
-# 直接启动 gitea，监听 8080 端口
-CMD ["gitea", "web", "--port", "8080"]
+# 使用 entrypoint 脚本启动，确保持久化目录存在后再运行 gitea
+CMD ["/entrypoint.sh"]
