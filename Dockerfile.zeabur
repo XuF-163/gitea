@@ -49,8 +49,46 @@ RUN apk --no-cache add \
 # 创建数据目录（与 GITEA_CUSTOM 和 app.ini 路径一致）
 RUN mkdir -p /data/gitea/custom/conf /data/gitea/data /data/git
 
-# 启动脚本：确保持久化卷中的关键目录存在
-RUN printf '#!/bin/sh\nset -e\nmkdir -p /data/gitea/custom/conf /data/gitea/data /data/git\nexec gitea web --port 8080\n' > /entrypoint.sh && chmod +x /entrypoint.sh
+# 启动脚本：确保持久化目录存在，如果没有 app.ini 则写入默认配置
+RUN cat > /entrypoint.sh << 'ENTRYEOF'
+#!/bin/sh
+set -e
+mkdir -p /data/gitea/custom/conf /data/gitea/data /data/git /data/gitea/log
+
+# 如果 app.ini 不存在，生成默认配置（PaaS 部署用）
+if [ ! -f /data/gitea/custom/conf/app.ini ]; then
+  cat > /data/gitea/custom/conf/app.ini << 'INIEOF'
+[server]
+HTTP_PORT = 8080
+LOCAL_ROOT_URL = http://localhost:8080/
+
+[repository]
+ROOT = /data/gitea/data/repos
+
+[lfs]
+PATH = /data/gitea/data/lfs
+
+[attachment]
+PATH = /data/gitea/data/attachments
+
+[packages]
+PATH = /data/gitea/data/packages
+
+[session]
+PROVIDER = file
+
+[log]
+ROOT_PATH = /data/gitea/log
+
+[security]
+INSTALL_LOCK = false
+INIEOF
+  echo "Generated default app.ini"
+fi
+
+exec gitea web --port 8080
+ENTRYEOF
+chmod +x /entrypoint.sh
 
 # 复制构建产物
 COPY --from=build-env /go/src/code.gitea.io/gitea/gitea /usr/local/bin/gitea
