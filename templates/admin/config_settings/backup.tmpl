@@ -1,35 +1,107 @@
 <h4 class="ui top attached header">
 	{{ctx.Locale.Tr "admin.config.backup_config"}}
 </h4>
-<div class="ui attached table segment">
+<div class="ui attached segment">
 	<p>{{ctx.Locale.Tr "admin.config.backup_config_desc"}}</p>
-	<dl class="admin-dl-horizontal">
-		<dt>{{ctx.Locale.Tr "admin.config.backup_storage_type"}}</dt>
-		<dd>{{.Backup.WebDAVStorage.Type}}</dd>
+	<form class="ui form ignore-dirty system-config-form" method="post" action="{{AppSubUrl}}/-/admin/config">
+		{{$cfgOpt := $.SystemConfig.Backup.StorageConfig}}
+		{{$cfgKey := $cfgOpt.DynKey}}
+		{{$storageConfig := $cfgOpt.Value ctx}}
+		<input type="hidden" data-config-dyn-key="{{$cfgKey}}" data-config-value-json="{{JsonUtils.EncodeToString $storageConfig}}">
 
-		{{if eq .Backup.WebDAVStorage.Type "webdav"}}
-		<dt>{{ctx.Locale.Tr "admin.config.backup_webdav_url"}}</dt>
-		<dd>{{.Backup.WebDAVStorage.WebDAVConfig.URL}}</dd>
-		{{end}}
+		{{/* 存储类型选择 */}}
+		<div class="field">
+			<label>{{ctx.Locale.Tr "admin.config.backup_storage_type"}}</label>
+			<select name="{{$cfgKey}}.StorageType" id="backup-storage-type">
+				<option value="" {{if eq $storageConfig.StorageType ""}}selected{{end}}>{{ctx.Locale.Tr "admin.config.backup_storage_type_none"}}</option>
+				<option value="local" {{if eq $storageConfig.StorageType "local"}}selected{{end}}>{{ctx.Locale.Tr "admin.config.backup_storage_type_local"}}</option>
+				<option value="webdav" {{if eq $storageConfig.StorageType "webdav"}}selected{{end}}>{{ctx.Locale.Tr "admin.config.backup_storage_type_webdav"}}</option>
+			</select>
+		</div>
 
-		{{if eq .Backup.WebDAVStorage.Type "local"}}
-		<dt>{{ctx.Locale.Tr "admin.config.backup_path"}}</dt>
-		<dd>{{.Backup.WebDAVStorage.Path}}</dd>
-		{{end}}
+		{{/* 本地路径 - 仅 storage type = local 时显示 */}}
+		<div class="field backup-setting-for-local" {{if ne $storageConfig.StorageType "local"}}hidden{{end}}>
+			<label>{{ctx.Locale.Tr "admin.config.backup_local_path"}}</label>
+			<input type="text" name="{{$cfgKey}}.LocalPath" value="{{$storageConfig.LocalPath}}" placeholder="/data/gitea/backups">
+		</div>
 
-		<dt>{{ctx.Locale.Tr "admin.config.backup_format"}}</dt>
-		<dd>{{.Backup.Format}}</dd>
+		{{/* WebDAV 配置 - 仅 storage type = webdav 时显示 */}}
+		<div class="backup-setting-for-webdav" {{if ne $storageConfig.StorageType "webdav"}}hidden{{end}}>
+			<div class="field">
+				<label>{{ctx.Locale.Tr "admin.config.backup_webdav_url"}}</label>
+				<input type="text" name="{{$cfgKey}}.WebDAVURL" value="{{$storageConfig.WebDAVURL}}" placeholder="http://host:port/dav/path">
+			</div>
+			<div class="field">
+				<label>{{ctx.Locale.Tr "admin.config.backup_webdav_username"}}</label>
+				<input type="text" name="{{$cfgKey}}.WebDAVUsername" value="{{$storageConfig.WebDAVUsername}}">
+			</div>
+			<div class="field">
+				<label>{{ctx.Locale.Tr "admin.config.backup_webdav_password"}}</label>
+				<input type="password" name="{{$cfgKey}}.WebDAVPassword" value="{{$storageConfig.WebDAVPassword}}" autocomplete="off">
+			</div>
+		</div>
 
-		<dt>{{ctx.Locale.Tr "admin.config.backup_skip_lfs"}}</dt>
-		<dd>{{svg (Iif .Backup.SkipLFS "octicon-check" "octicon-x")}}</dd>
+		<div class="divider"></div>
 
-		<dt>{{ctx.Locale.Tr "admin.config.backup_skip_attachments"}}</dt>
-		<dd>{{svg (Iif .Backup.SkipAttachments "octicon-check" "octicon-x")}}</dd>
+		{{/* 备份格式 */}}
+		{{$cfgOpt = $.SystemConfig.Backup.Format}}
+		{{$cfgKey = $cfgOpt.DynKey}}
+		{{$format := $cfgOpt.Value ctx}}
+		<input type="hidden" data-config-dyn-key="{{$cfgKey}}" data-config-value-json="{{JsonUtils.EncodeToString $format}}">
+		<div class="field">
+			<label>{{ctx.Locale.Tr "admin.config.backup_format"}}</label>
+			<select name="{{$cfgKey}}">
+				<option value="zip" {{if eq $format "zip"}}selected{{end}}>zip</option>
+				<option value="tar.gz" {{if eq $format "tar.gz"}}selected{{end}}>tar.gz</option>
+				<option value="tar.xz" {{if eq $format "tar.xz"}}selected{{end}}>tar.xz</option>
+			</select>
+		</div>
 
-		<dt>{{ctx.Locale.Tr "admin.config.backup_skip_packages"}}</dt>
-		<dd>{{svg (Iif .Backup.SkipPackages "octicon-check" "octicon-x")}}</dd>
+		{{/* 跳过选项 */}}
+		<div class="divider"></div>
 
-		<dt>{{ctx.Locale.Tr "admin.config.backup_skip_db"}}</dt>
-		<dd>{{svg (Iif .Backup.SkipDB "octicon-check" "octicon-x")}}</dd>
-	</dl>
+		{{$cfgOpt = $.SystemConfig.Backup.SkipLFS}}
+		{{$cfgKey = $cfgOpt.DynKey}}
+		<div class="field">
+			<div class="ui checkbox">
+				<input type="checkbox" data-config-dyn-key="{{$cfgKey}}" data-config-value-type="boolean" {{if $cfgOpt.Value ctx}}checked{{end}}>
+				<label>{{ctx.Locale.Tr "admin.config.backup_skip_lfs"}}</label>
+			</div>
+		</div>
+
+		{{$cfgOpt = $.SystemConfig.Backup.SkipAttach}}
+		{{$cfgKey = $cfgOpt.DynKey}}
+		<div class="field">
+			<div class="ui checkbox">
+				<input type="checkbox" data-config-dyn-key="{{$cfgKey}}" data-config-value-type="boolean" {{if $cfgOpt.Value ctx}}checked{{end}}>
+				<label>{{ctx.Locale.Tr "admin.config.backup_skip_attachments"}}</label>
+			</div>
+		</div>
+
+		{{$cfgOpt = $.SystemConfig.Backup.SkipPackages}}
+		{{$cfgKey = $cfgOpt.DynKey}}
+		<div class="field">
+			<div class="ui checkbox">
+				<input type="checkbox" data-config-dyn-key="{{$cfgKey}}" data-config-value-type="boolean" {{if $cfgOpt.Value ctx}}checked{{end}}>
+				<label>{{ctx.Locale.Tr "admin.config.backup_skip_packages"}}</label>
+			</div>
+		</div>
+
+		{{$cfgOpt = $.SystemConfig.Backup.SkipDB}}
+		{{$cfgKey = $cfgOpt.DynKey}}
+		<div class="field">
+			<div class="ui checkbox">
+				<input type="checkbox" data-config-dyn-key="{{$cfgKey}}" data-config-value-type="boolean" {{if $cfgOpt.Value ctx}}checked{{end}}>
+				<label>{{ctx.Locale.Tr "admin.config.backup_skip_db"}}</label>
+			</div>
+		</div>
+
+		<div class="divider"></div>
+
+		{{/* 测试连接 + 保存 */}}
+		<div class="field">
+			<button type="button" class="ui button" id="test-backup-storage-btn">{{ctx.Locale.Tr "admin.config.backup_test_connection"}}</button>
+			<button class="ui primary button">{{ctx.Locale.Tr "save"}}</button>
+		</div>
+	</form>
 </div>

@@ -195,7 +195,7 @@ func Init() error {
 		initRepoArchives,
 		initPackages,
 		initActions,
-		initBackup,
+		InitBackup,
 	} {
 		if err := f(); err != nil {
 			return err
@@ -280,7 +280,8 @@ func initActions() (err error) {
 	return err
 }
 
-func initBackup() (err error) {
+// InitBackup re-initializes the backup storage, used after config changes in admin panel
+func InitBackup() (err error) {
 	if setting.Backup.WebDAVStorage == nil {
 		Backup = &discardStorage{reason: "Backup storage is not configured"}
 		return nil

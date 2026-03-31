@@ -760,6 +760,7 @@ func registerWebRoutes(m *web.Router, webAuth *AuthMiddleware) {
 			m.Post("", admin.ChangeConfig)
 			m.Post("/test_mail", admin.SendTestMail)
 			m.Post("/test_cache", admin.TestCache)
+			m.Post("/test_backup_storage", admin.TestBackupStorage)
 			m.Get("/settings", admin.ConfigSettings)
 		})
 

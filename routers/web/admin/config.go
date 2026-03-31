@@ -8,6 +8,7 @@ import (
 	"errors"
 	"net/http"
 	"net/url"
+	"strconv"
 	"strings"
 
 	system_model "code.gitea.io/gitea/models/system"
@@ -17,6 +18,7 @@ import (
 	"code.gitea.io/gitea/modules/log"
 	"code.gitea.io/gitea/modules/setting"
 	"code.gitea.io/gitea/modules/setting/config"
+	"code.gitea.io/gitea/modules/storage"
 	"code.gitea.io/gitea/modules/templates"
 	"code.gitea.io/gitea/modules/util"
 	"code.gitea.io/gitea/services/context"
@@ -242,5 +244,96 @@ loop:
 		return
 	}
 	config.GetDynGetter().InvalidateCache()
+
+	// 如果备份配置有变更，同步到 app.ini 并重新初始化存储
+	backupChanged := false
+	for _, key := range configKeys {
+		if strings.HasPrefix(key, "backup.") {
+			backupChanged = true
+			break
+		}
+	}
+	if backupChanged {
+		if err := syncBackupConfigToIni(ctx); err != nil {
+			log.Error("Failed to sync backup config to app.ini: %v", err)
+		}
+	}
+
+	ctx.JSONOK()
+}
+
+// syncBackupConfigToIni 将动态备份配置同步到 app.ini，然后重新加载并初始化存储
+func syncBackupConfigToIni(ctx *context.Context) error {
+	cfg, err := setting.NewConfigProviderFromFile(setting.CustomConf)
+	if err != nil {
+		return err
+	}
+
+	backupCfg := setting.Config().Backup
+	storageConfig := backupCfg.StorageConfig.Value(ctx)
+
+	sec := cfg.Section("backup")
+
+	// 存储类型
+	sec.Key("STORAGE_TYPE").SetValue(string(storageConfig.StorageType))
+
+	// 本地路径
+	if storageConfig.StorageType == "local" {
+		sec.Key("PATH").SetValue(storageConfig.LocalPath)
+	} else {
+		sec.Key("PATH").SetValue("")
+	}
+
+	// WebDAV 配置
+	sec.Key("WEBDAV_URL").SetValue(storageConfig.WebDAVURL)
+	sec.Key("WEBDAV_USERNAME").SetValue(storageConfig.WebDAVUsername)
+	// 只有密码非空才写入（避免覆盖为空值）
+	if storageConfig.WebDAVPassword != "" {
+		sec.Key("WEBDAV_PASSWORD").SetValue(storageConfig.WebDAVPassword)
+	}
+
+	// 其他选项
+	sec.Key("BACKUP_FORMAT").SetValue(backupCfg.Format.Value(ctx))
+	sec.Key("SKIP_LFS").SetValue(strconv.FormatBool(backupCfg.SkipLFS.Value(ctx)))
+	sec.Key("SKIP_ATTACHMENTS").SetValue(strconv.FormatBool(backupCfg.SkipAttach.Value(ctx)))
+	sec.Key("SKIP_PACKAGES").SetValue(strconv.FormatBool(backupCfg.SkipPackages.Value(ctx)))
+	sec.Key("SKIP_DB").SetValue(strconv.FormatBool(backupCfg.SkipDB.Value(ctx)))
+
+	if err := cfg.SaveTo(setting.CustomConf); err != nil {
+		return err
+	}
+
+	// 重新加载配置
+	setting.InitCfgProvider(setting.CustomConf)
+	setting.LoadCommonSettings()
+	setting.LoadSettings()
+
+	// 重新初始化备份存储
+	return storage.InitBackup()
+}
+
+// TestBackupStorage 测试备份存储连接
+func TestBackupStorage(ctx *context.Context) {
+	// 先同步配置
+	if err := syncBackupConfigToIni(ctx); err != nil {
+		ctx.JSONError(ctx.Tr("admin.config.backup_test_failed", err.Error()))
+		return
+	}
+
+	// 测试存储连接
+	if storage.IsDiscardStorage(storage.Backup) {
+		ctx.JSONError(ctx.Tr("admin.config.backup_test_failed", "storage not initialized"))
+		return
+	}
+
+	// 尝试列出对象来验证连接
+	if err := storage.Backup.IterateObjects("", func(_ string, _ storage.Object) error {
+		return nil
+	}); err != nil {
+		ctx.JSONError(ctx.Tr("admin.config.backup_test_failed", err.Error()))
+		return
+	}
+
+	ctx.Flash.Success(ctx.Tr("admin.config.backup_test_success"))
 	ctx.JSONOK()
 }

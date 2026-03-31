@@ -217,5 +217,46 @@ export function initAdminConfigs(): void {
   registerGlobalInitFunc('initAdminConfigSettings', (el) => {
     queryElems(el, 'input[type="checkbox"][data-config-dyn-key]', initSystemConfigAutoCheckbox);
     queryElems(el, 'form.system-config-form', initSystemConfigForm);
+    initBackupStorageToggle(el);
+    initBackupTestButton(el);
+  });
+}
+
+function initBackupStorageToggle(el: Element): void {
+  const select = el.querySelector<HTMLSelectElement>('#backup-storage-type');
+  if (!select) return;
+
+  const toggleFields = () => {
+    const val = select.value;
+    for (const localEl of queryElems<HTMLInputElement>(el, '.backup-setting-for-local')) {
+      localEl.hidden = val !== 'local';
+    }
+    for (const webdavEl of queryElems<HTMLInputElement>(el, '.backup-setting-for-webdav')) {
+      webdavEl.hidden = val !== 'webdav';
+    }
+  };
+
+  select.addEventListener('change', toggleFields);
+  toggleFields(); // 初始化状态
+}
+
+function initBackupTestButton(el: Element): void {
+  const btn = el.querySelector<HTMLButtonElement>('#test-backup-storage-btn');
+  if (!btn) return;
+
+  btn.addEventListener('click', async () => {
+    btn.classList.add('disabled', 'loading');
+    try {
+      const resp = await POST(`${appSubUrl}/-/admin/config/test_backup_storage`);
+      const data: Record<string, any> = await resp.json();
+      if (data.errorMessage) {
+        throw new Error(data.errorMessage);
+      }
+      showTemporaryTooltip(btn, 'OK');
+    } catch (ex) {
+      showTemporaryTooltip(btn, ex.toString());
+    } finally {
+      btn.classList.remove('disabled', 'loading');
+    }
   });
 }

@@ -60,6 +60,7 @@ type ConfigStruct struct {
 	Picture    *PictureStruct
 	Repository *RepositoryStruct
 	Instance   *InstanceStruct
+	Backup     *BackupSettingsStruct
 }
 
 var (
@@ -81,6 +82,14 @@ func initDefaultConfig() {
 		Instance: &InstanceStruct{
 			WebBanner:       config.NewOption[WebBannerType]("instance.web_banner"),
 			MaintenanceMode: config.NewOption[MaintenanceModeType]("instance.maintenance_mode"),
+		},
+		Backup: &BackupSettingsStruct{
+			StorageConfig: config.NewOption[BackupConfigType]("backup.storage_config"),
+			Format:        config.NewOption[string]("backup.format").WithDefaultSimple("zip").WithFileConfig(config.CfgSecKey{Sec: "backup", Key: "BACKUP_FORMAT"}),
+			SkipLFS:       config.NewOption[bool]("backup.skip_lfs").WithFileConfig(config.CfgSecKey{Sec: "backup", Key: "SKIP_LFS"}),
+			SkipAttach:    config.NewOption[bool]("backup.skip_attachments").WithFileConfig(config.CfgSecKey{Sec: "backup", Key: "SKIP_ATTACHMENTS"}),
+			SkipPackages:  config.NewOption[bool]("backup.skip_packages").WithFileConfig(config.CfgSecKey{Sec: "backup", Key: "SKIP_PACKAGES"}),
+			SkipDB:        config.NewOption[bool]("backup.skip_db").WithFileConfig(config.CfgSecKey{Sec: "backup", Key: "SKIP_DB"}),
 		},
 	}
 }
