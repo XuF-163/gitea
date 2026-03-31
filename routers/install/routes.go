@@ -31,6 +31,13 @@ func Routes() *web.Router {
 	r.Post("/", web.Bind(forms.InstallForm{}), SubmitInstall)
 	r.Get("/post-install", InstallDone)
 
+	// 备份恢复路由
+	r.Get("/restore", RestorePage)
+	r.Get("/restore/status", RestoreStatus)
+	r.Post("/restore/start", StartRestore)
+	r.Post("/restore/skip", SkipRestore)
+	r.Get("/restore/finish", RestoreFinish)
+
 	r.Get("/-/web-theme/list", misc.WebThemeList)
 	r.Post("/-/web-theme/apply", misc.WebThemeApply)
 	r.Get("/api/healthz", healthcheck.Check)

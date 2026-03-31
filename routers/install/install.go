@@ -571,6 +571,22 @@ func SubmitInstall(ctx *context.Context) {
 
 	setting.ClearEnvConfigKeys()
 	log.Info("First-time run install finished!")
+
+	// 检查是否有备份可恢复
+	if form.BackupStorageType != "" && form.BackupStorageType != "none" {
+		// 先加载备份设置（因为刚才保存了配置）
+		setting.InitCfgProvider(setting.CustomConf)
+		setting.LoadCommonSettings()
+		setting.LoadSettings()
+
+		if backupInfo, err := CheckBackupOnInstall(); err == nil && backupInfo != nil {
+			// 有备份可恢复，跳转到恢复页面
+			log.Info("Found backup %s, redirecting to restore page", backupInfo.FileName)
+			ctx.Redirect(setting.AppSubURL + "/restore")
+			return
+		}
+	}
+
 	InstallDone(ctx)
 
 	go func() {

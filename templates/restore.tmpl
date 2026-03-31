@@ -1,0 +1,75 @@
+{{template "base/head" .}}
+<div role="main" aria-label="{{.Title}}" class="page-content install post-install tw-h-full">
+	<div class="home tw-text-center tw-h-full tw-flex tw-flex-col tw-justify-center">
+		<h2>{{ctx.Locale.Tr "install.restore_title"}}</h2>
+		<p>{{ctx.Locale.Tr "install.restore_desc"}}</p>
+
+		<div id="restore-actions" class="tw-my-4">
+			<button class="ui primary button" onclick="startRestore()">{{ctx.Locale.Tr "install.restore_btn"}}</button>
+			<a class="ui button" href="{{AppSubUrl}}/restore/skip">{{ctx.Locale.Tr "install.restore_skip"}}</a>
+		</div>
+
+		<div id="restore-progress" class="tw-hidden tw-mx-auto tw-max-w-md">
+			<progress id="restore-progress-bar" value="0" max="100" style="width:100%;height:20px"></progress>
+			<p id="restore-progress-message" class="tw-mt-2"></p>
+		</div>
+
+		<div id="restore-done" class="tw-hidden tw-my-4">
+			<div class="tw-text-center">
+				<img width="160" src="{{AssetUrlPrefix}}/img/loading.png" alt aria-hidden="true">
+				<p class="tw-my-4 tw-text-[18px]">
+					<a id="goto-after-restore" href="{{AppSubUrl}}/restore/finish">{{ctx.Locale.Tr "install.restore_finishing"}}</a>
+				</p>
+			</div>
+		</div>
+
+		<div id="restore-failed" class="tw-hidden tw-my-4">
+			<p class="tw-text-red">{{ctx.Locale.Tr "install.restore_failed"}}</p>
+			<p id="restore-error-message"></p>
+			<a class="ui button" href="{{AppSubUrl}}/restore/skip">{{ctx.Locale.Tr "install.restore_skip"}}</a>
+		</div>
+	</div>
+</div>
+{{template "base/footer" .}}
+
+<script>
+function startRestore() {
+	document.getElementById('restore-actions').classList.add('tw-hidden');
+	document.getElementById('restore-progress').classList.remove('tw-hidden');
+
+	fetch('{{AppSubUrl}}/restore/start', {method: 'POST'})
+		.then(resp => {
+			if (!resp.ok) return resp.json().then(d => { throw new Error(d.error || 'failed'); });
+			pollStatus();
+		})
+		.catch(err => {
+			showError(err.message);
+		});
+}
+
+function pollStatus() {
+	fetch('{{AppSubUrl}}/restore/status')
+		.then(resp => resp.json())
+		.then(data => {
+			if (data.status === 'running') {
+				document.getElementById('restore-progress-bar').value = data.percent;
+				document.getElementById('restore-progress-message').textContent = data.message;
+				setTimeout(pollStatus, 2000);
+			} else if (data.status === 'done') {
+				document.getElementById('restore-progress').classList.add('tw-hidden');
+				document.getElementById('restore-done').classList.remove('tw-hidden');
+			} else if (data.status === 'failed') {
+				showError(data.error);
+			}
+		})
+		.catch(() => {
+			setTimeout(pollStatus, 3000);
+		});
+}
+
+function showError(msg) {
+	document.getElementById('restore-progress').classList.add('tw-hidden');
+	document.getElementById('restore-failed').classList.remove('tw-hidden');
+	if (msg) document.getElementById('restore-error-message').textContent = msg;
+}
+</script>
