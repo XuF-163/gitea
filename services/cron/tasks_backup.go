@@ -178,6 +178,42 @@ func runBackupTask(ctx context.Context, cfg *BackupConfig) error {
 		os.Remove(dbFile) // db dump 已归档，删除临时文件
 	}
 
+	// 添加配置文件 app.ini
+	log.Info("Adding configuration file from %s", setting.CustomConf)
+	if err := dumper.AddFileByPath("app.ini", setting.CustomConf); err != nil {
+		log.Warn("Failed to include app.ini: %v", err)
+	}
+
+	// 添加自定义目录 custom/
+	customDir, err := os.Stat(setting.CustomPath)
+	if err == nil && customDir.IsDir() {
+		if is, _ := dump.IsSubdir(setting.AppDataPath, setting.CustomPath); !is {
+			log.Info("Adding custom directory from %s", setting.CustomPath)
+			if err := dumper.AddRecursiveExclude("custom", setting.CustomPath, nil); err != nil {
+				log.Warn("Failed to include custom: %v", err)
+			}
+		} else {
+			log.Info("Custom dir %s is inside data dir %s, skipped", setting.CustomPath, setting.AppDataPath)
+		}
+	} else {
+		log.Info("Custom dir %s doesn't exist, skipped", setting.CustomPath)
+	}
+
+	// 添加数据目录 data/（排除已单独备份的子目录）
+	if _, err := os.Stat(setting.AppDataPath); err == nil {
+		log.Info("Adding data directory from %s", setting.AppDataPath)
+		var excludes []string
+		excludes = append(excludes, setting.RepoRootPath)
+		excludes = append(excludes, setting.LFS.Storage.Path)
+		excludes = append(excludes, setting.Attachment.Storage.Path)
+		excludes = append(excludes, setting.Packages.Storage.Path)
+		excludes = append(excludes, setting.RepoArchive.Storage.Path)
+		excludes = append(excludes, setting.Log.RootPath)
+		if err := dumper.AddRecursiveExclude("data", setting.AppDataPath, excludes); err != nil {
+			log.Warn("Failed to include data directory: %v", err)
+		}
+	}
+
 	// Close dumper and finalize archive
 	if err := dumper.Close(); err != nil {
 		return fmt.Errorf("failed to close dumper: %w", err)

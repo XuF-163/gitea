@@ -65,7 +65,7 @@ func GetLatestBackupInfo(ctx context.Context, backupStorage storage.ObjectStorag
 }
 
 // RestoreFromBackup 从备份存储恢复数据
-// 备份归档格式（与 cron task 一致）：repos/ + data/lfs/ + data/attachments/ + data/packages/ + gitea-db.sql
+// 备份归档格式（与 cron task 一致）：repos/ + data/ + custom/ + app.ini + gitea-db.sql
 func RestoreFromBackup(ctx context.Context, backupStorage storage.ObjectStorage, backupPath string) error {
 	ResetRestoreProgress()
 	UpdateRestoreProgress("downloading backup", 5)
@@ -84,7 +84,7 @@ func RestoreFromBackup(ctx context.Context, backupStorage storage.ObjectStorage,
 		SetRestoreFailed(fmt.Sprintf("failed to download backup: %v", err))
 		return fmt.Errorf("failed to download backup: %w", err)
 	}
-	UpdateRestoreProgress("download complete, extracting archive", 30)
+	UpdateRestoreProgress("download complete, extracting archive", 25)
 
 	// 将备份归档当作文件系统读取
 	archiveFS, err := archives.FileSystem(ctx, backupFile, nil)
@@ -93,8 +93,20 @@ func RestoreFromBackup(ctx context.Context, backupStorage storage.ObjectStorage,
 		return fmt.Errorf("failed to open archive: %w", err)
 	}
 
+	// 恢复配置文件 app.ini
+	UpdateRestoreProgress("restoring configuration", 30)
+	if err := restoreSingleFile(archiveFS, "app.ini", setting.CustomConf); err != nil {
+		log.Error("Failed to restore app.ini: %v", err)
+	}
+
+	// 恢复自定义目录 custom/
+	UpdateRestoreProgress("restoring custom directory", 35)
+	if err := restoreFromArchiveFS(archiveFS, "custom", setting.CustomPath); err != nil {
+		log.Error("Failed to restore custom: %v", err)
+	}
+
 	// 恢复仓库
-	UpdateRestoreProgress("restoring repositories", 40)
+	UpdateRestoreProgress("restoring repositories", 45)
 	if err := restoreFromArchiveFS(archiveFS, "repos", setting.RepoRootPath); err != nil {
 		log.Error("Failed to restore repos: %v", err)
 	}
@@ -120,7 +132,7 @@ func RestoreFromBackup(ctx context.Context, backupStorage storage.ObjectStorage,
 	}
 
 	// 恢复包
-	UpdateRestoreProgress("restoring packages", 75)
+	UpdateRestoreProgress("restoring packages", 72)
 	pkgPath := setting.Packages.Storage.Path
 	if pkgPath == "" {
 		pkgPath = filepath.Join(setting.AppDataPath, "packages")
@@ -129,8 +141,14 @@ func RestoreFromBackup(ctx context.Context, backupStorage storage.ObjectStorage,
 		log.Error("Failed to restore packages: %v", err)
 	}
 
+	// 恢复其他 data/ 子目录（indexers, queues 等，排除已恢复的目录）
+	UpdateRestoreProgress("restoring data directory", 80)
+	if err := restoreDataDirExcludingKnown(archiveFS); err != nil {
+		log.Error("Failed to restore data directory: %v", err)
+	}
+
 	// 恢复数据库 SQL dump
-	UpdateRestoreProgress("restoring database", 85)
+	UpdateRestoreProgress("restoring database", 90)
 	if err := restoreDatabaseFromArchive(archiveFS); err != nil {
 		log.Error("Failed to restore database: %v", err)
 	}
@@ -197,6 +215,96 @@ func restoreFromArchiveFS(archiveFS fs.FS, subDir, destPath string) error {
 		defer src.Close()
 
 		// 创建目标文件
+		if err := os.MkdirAll(filepath.Dir(destFile), os.ModePerm); err != nil {
+			return err
+		}
+		dst, err := os.Create(destFile)
+		if err != nil {
+			return err
+		}
+		defer dst.Close()
+
+		_, err = io.Copy(dst, src)
+		return err
+	})
+}
+
+// restoreSingleFile 从归档中恢复单个文件到目标路径
+func restoreSingleFile(archiveFS fs.FS, srcName, destPath string) error {
+	src, err := archiveFS.Open(srcName)
+	if err != nil {
+		log.Info("File %s not found in backup, skipping", srcName)
+		return nil
+	}
+	defer src.Close()
+
+	if err := os.MkdirAll(filepath.Dir(destPath), os.ModePerm); err != nil {
+		return fmt.Errorf("failed to create parent dir for %s: %w", destPath, err)
+	}
+
+	dst, err := os.Create(destPath)
+	if err != nil {
+		return fmt.Errorf("failed to create %s: %w", destPath, err)
+	}
+	defer dst.Close()
+
+	if _, err := io.Copy(dst, src); err != nil {
+		return fmt.Errorf("failed to copy %s: %w", srcName, err)
+	}
+
+	log.Info("Restored %s to %s", srcName, destPath)
+	return nil
+}
+
+// restoreDataDirExcludingKnown 从归档的 data/ 目录恢复文件，
+// 但跳过已单独恢复的子目录（lfs, attachments, packages）
+func restoreDataDirExcludingKnown(archiveFS fs.FS) error {
+	// 检查归档中是否存在 data 目录
+	if _, err := fs.ReadDir(archiveFS, "data"); err != nil {
+		log.Info("Directory data not found in backup, skipping")
+		return nil
+	}
+
+	// 已单独恢复的子目录，跳过
+	alreadyRestored := map[string]bool{
+		"lfs":         true,
+		"attachments": true,
+		"packages":    true,
+	}
+
+	return fs.WalkDir(archiveFS, "data", func(path string, d fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+
+		// 计算相对于 data/ 的路径
+		relPath := strings.TrimPrefix(path, "data/")
+		if relPath == "data" {
+			return nil // 跳过根目录自身
+		}
+
+		// 跳过已单独恢复的顶层子目录
+		parts := strings.SplitN(relPath, "/", 2)
+		if alreadyRestored[parts[0]] {
+			if len(parts) == 1 && d.IsDir() {
+				return fs.SkipDir // 跳过整个子目录
+			}
+			return nil
+		}
+
+		destFile := filepath.Join(setting.AppDataPath, filepath.FromSlash(relPath))
+
+		if d.IsDir() {
+			return os.MkdirAll(destFile, os.ModePerm)
+		}
+
+		// 打开归档中的文件
+		src, err := archiveFS.Open(path)
+		if err != nil {
+			return fmt.Errorf("open %s: %w", path, err)
+		}
+		defer src.Close()
+
 		if err := os.MkdirAll(filepath.Dir(destFile), os.ModePerm); err != nil {
 			return err
 		}
