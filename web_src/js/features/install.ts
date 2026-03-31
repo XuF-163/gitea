@@ -82,6 +82,21 @@ function initPreInstall() {
       document.querySelector<HTMLInputElement>('#disable-registration input')!.checked = false;
     }
   });
+
+  // 备份存储类型切换
+  const backupStorageType = document.querySelector<HTMLInputElement>('#backup_storage_type');
+  if (backupStorageType) {
+    backupStorageType.addEventListener('change', function () {
+      const storageType = this.value;
+      hideElem('div[data-backup-setting-for]');
+      if (storageType === 'local') {
+        showElem('div[data-backup-setting-for=local]');
+      } else if (storageType === 'webdav') {
+        showElem('div[data-backup-setting-for=webdav]');
+      }
+    });
+    backupStorageType.dispatchEvent(new Event('change'));
+  }
 }
 
 function initPostInstall() {

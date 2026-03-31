@@ -125,6 +125,20 @@ func Install(ctx *context.Context) {
 	form.NoReplyAddress = setting.Service.NoReplyAddress
 	form.PasswordAlgorithm = hash.ConfigHashAlgorithm(setting.PasswordHashAlgo)
 
+	// 备份设置
+	if setting.Backup.WebDAVStorage != nil {
+		form.BackupStorageType = string(setting.Backup.WebDAVStorage.Type)
+		if setting.Backup.WebDAVStorage.Type == setting.LocalStorageType {
+			form.BackupLocalPath = setting.Backup.WebDAVStorage.Path
+		} else if setting.Backup.WebDAVStorage.Type == setting.WebDAVStorageType {
+			form.WebDAVURL = setting.Backup.WebDAVStorage.WebDAVConfig.URL
+			form.WebDAVUsername = setting.Backup.WebDAVStorage.WebDAVConfig.Username
+		}
+	}
+	if form.BackupStorageType == "" {
+		form.BackupStorageType = "none"
+	}
+
 	middleware.AssignForm(form, ctx.Data)
 	ctx.HTML(http.StatusOK, tplInstall)
 }
@@ -398,6 +412,18 @@ func SubmitInstall(ctx *context.Context) {
 	}
 	cfg.Section("service").Key("REGISTER_EMAIL_CONFIRM").SetValue(strconv.FormatBool(form.RegisterConfirm))
 	cfg.Section("service").Key("ENABLE_NOTIFY_MAIL").SetValue(strconv.FormatBool(form.MailNotify))
+
+	// 备份设置
+	if form.BackupStorageType != "" && form.BackupStorageType != "none" {
+		cfg.Section("backup").Key("STORAGE_TYPE").SetValue(form.BackupStorageType)
+		if form.BackupStorageType == "local" {
+			cfg.Section("backup").Key("PATH").SetValue(form.BackupLocalPath)
+		} else if form.BackupStorageType == "webdav" {
+			cfg.Section("backup").Key("WEBDAV_URL").SetValue(form.WebDAVURL)
+			cfg.Section("backup").Key("WEBDAV_USERNAME").SetValue(form.WebDAVUsername)
+			cfg.Section("backup").Key("WEBDAV_PASSWORD").SetValue(form.WebDAVPassword)
+		}
+	}
 
 	cfg.Section("openid").Key("ENABLE_OPENID_SIGNIN").SetValue(strconv.FormatBool(form.EnableOpenIDSignIn))
 	cfg.Section("openid").Key("ENABLE_OPENID_SIGNUP").SetValue(strconv.FormatBool(form.EnableOpenIDSignUp))

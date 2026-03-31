@@ -64,6 +64,13 @@ type InstallForm struct {
 	AdminConfirmPasswd string
 	AdminEmail         string `binding:"OmitEmpty;MinSize(3);MaxSize(254);Include(@)" locale:"install.admin_email"`
 
+	// Backup settings
+	BackupStorageType string `form:"backup_storage_type"`
+	BackupLocalPath   string `form:"backup_local_path"`
+	WebDAVURL         string `form:"webdav_url"`
+	WebDAVUsername    string `form:"webdav_username"`
+	WebDAVPassword    string `form:"webdav_password"`
+
 	// ReinstallConfirmFirst we can not use 1/2/3 or A/B/C here, there is a framework bug, can not parse "reinstall_confirm_1" or "reinstall_confirm_a"
 	ReinstallConfirmFirst  bool
 	ReinstallConfirmSecond bool

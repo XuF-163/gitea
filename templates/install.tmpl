@@ -278,6 +278,51 @@
 							</div>
 						</details>
 
+						<!-- Backup -->
+						<details class="optional field">
+							<summary class="right-content tw-py-2">
+								{{ctx.Locale.Tr "install.backup_title"}}
+							</summary>
+							<p class="center">{{ctx.Locale.Tr "install.backup_setting_desc"}}</p>
+							<div class="inline field">
+								<label>{{ctx.Locale.Tr "install.backup_storage_type"}}</label>
+								<div class="ui selection dropdown">
+									<input type="hidden" id="backup_storage_type" name="backup_storage_type" value="{{.backup_storage_type}}">
+									<div class="default text">{{ctx.Locale.Tr "install.backup_storage_type_none"}}</div>
+									{{svg "octicon-triangle-down" 14 "dropdown icon"}}
+									<div class="menu">
+										<div class="item" data-value="none">{{ctx.Locale.Tr "install.backup_storage_type_none"}}</div>
+										<div class="item" data-value="local">{{ctx.Locale.Tr "install.backup_storage_type_local"}}</div>
+										<div class="item" data-value="webdav">{{ctx.Locale.Tr "install.backup_storage_type_webdav"}}</div>
+									</div>
+								</div>
+							</div>
+
+							<div class="tw-mt-4 tw-hidden" data-backup-setting-for="local">
+								<div class="inline field">
+									<label for="backup_local_path">{{ctx.Locale.Tr "install.backup_path"}}</label>
+									<input id="backup_local_path" name="backup_local_path" value="{{.backup_local_path}}">
+									<span class="help">{{ctx.Locale.Tr "install.backup_path_helper"}}</span>
+								</div>
+							</div>
+
+							<div class="tw-mt-4 tw-hidden" data-backup-setting-for="webdav">
+								<div class="inline field">
+									<label for="webdav_url">{{ctx.Locale.Tr "install.backup_webdav_url"}}</label>
+									<input id="webdav_url" name="webdav_url" value="{{.webdav_url}}" placeholder="https://webdav.example.com/backups/">
+									<span class="help">{{ctx.Locale.Tr "install.backup_webdav_url_helper"}}</span>
+								</div>
+								<div class="inline field">
+									<label for="webdav_username">{{ctx.Locale.Tr "install.backup_webdav_username"}}</label>
+									<input id="webdav_username" name="webdav_username" value="{{.webdav_username}}">
+								</div>
+								<div class="inline field">
+									<label for="webdav_password">{{ctx.Locale.Tr "install.backup_webdav_password"}}</label>
+									<input id="webdav_password" name="webdav_password" type="password" autocomplete="new-password" value="{{.webdav_password}}">
+								</div>
+							</div>
+						</details>
+
 						<!-- Admin -->
 						<details class="optional field">
 							<summary class="right-content tw-py-2{{if .Err_Admin}} tw-text-red{{end}}">
