@@ -13,7 +13,7 @@
 		<div class="field">
 			<label>{{ctx.Locale.Tr "admin.config.backup_storage_type"}}</label>
 			<select name="{{$cfgKey}}.StorageType" id="backup-storage-type">
-				<option value="" {{if eq $storageConfig.StorageType ""}}selected{{end}}>{{ctx.Locale.Tr "admin.config.backup_storage_type_none"}}</option>
+				<option value="none" {{if or (eq $storageConfig.StorageType "none") (eq $storageConfig.StorageType "")}}selected{{end}}>{{ctx.Locale.Tr "admin.config.backup_storage_type_none"}}</option>
 				<option value="local" {{if eq $storageConfig.StorageType "local"}}selected{{end}}>{{ctx.Locale.Tr "admin.config.backup_storage_type_local"}}</option>
 				<option value="webdav" {{if eq $storageConfig.StorageType "webdav"}}selected{{end}}>{{ctx.Locale.Tr "admin.config.backup_storage_type_webdav"}}</option>
 			</select>
@@ -38,6 +38,16 @@
 			<div class="field">
 				<label>{{ctx.Locale.Tr "admin.config.backup_webdav_password"}}</label>
 				<input type="password" name="{{$cfgKey}}.WebDAVPassword" value="{{$storageConfig.WebDAVPassword}}" autocomplete="off">
+			</div>
+			<div class="field">
+				<label>{{ctx.Locale.Tr "admin.config.backup_webdav_timeout"}}</label>
+				<input type="number" name="{{$cfgKey}}.WebDAVTimeout" value="{{$storageConfig.WebDAVTimeout}}" min="0" step="1" data-config-value-type="number">
+			</div>
+			<div class="field">
+				<div class="ui toggle checkbox">
+					<input type="checkbox" name="{{$cfgKey}}.WebDAVInsecureSkipVerify" data-config-value-type="boolean" {{if $storageConfig.WebDAVInsecureSkipVerify}}checked{{end}}>
+					<label>{{ctx.Locale.Tr "admin.config.backup_webdav_insecure_skip_verify"}}</label>
+				</div>
 			</div>
 		</div>
 

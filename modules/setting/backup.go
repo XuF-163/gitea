@@ -31,6 +31,12 @@ func loadBackupFrom(rootCfg ConfigProvider) error {
 	Backup.SkipPackages = sec.Key("SKIP_PACKAGES").MustBool(false)
 	Backup.SkipDB = sec.Key("SKIP_DB").MustBool(false)
 
+	if storageType := sec.Key("STORAGE_TYPE").String(); storageType == "" || storageType == "none" {
+		Backup.WebDAVStorage = nil
+		log.Info("Backup storage is disabled")
+		return nil
+	}
+
 	// Load backup storage configuration
 	Backup.WebDAVStorage, err = getStorage(rootCfg, "backup", "", sec)
 	if err != nil {

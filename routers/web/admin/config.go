@@ -195,13 +195,23 @@ func ConfigSettings(ctx *context.Context) {
 
 	// 从 app.ini 构建备份存储的初始配置，供模板 data-config-value-json 使用
 	// 动态配置系统只支持单 key 回退，但备份存储配置散布在多个 key 中
-	backupInitialConfig := setting.BackupConfigType{}
+	backupInitialConfig := setting.BackupConfigType{
+		StorageType:   "none",
+		WebDAVTimeout: 30,
+	}
 	if setting.Backup.WebDAVStorage != nil {
 		backupInitialConfig.StorageType = string(setting.Backup.WebDAVStorage.Type)
 		backupInitialConfig.LocalPath = setting.Backup.WebDAVStorage.Path
-		backupInitialConfig.WebDAVURL = setting.Backup.WebDAVStorage.WebDAVConfig.URL
-		backupInitialConfig.WebDAVUsername = setting.Backup.WebDAVStorage.WebDAVConfig.Username
-		backupInitialConfig.WebDAVPassword = setting.Backup.WebDAVStorage.WebDAVConfig.Password
+		if setting.Backup.WebDAVStorage.Type == setting.WebDAVStorageType {
+			backupInitialConfig.WebDAVURL = setting.Backup.WebDAVStorage.WebDAVConfig.URL
+			backupInitialConfig.WebDAVUsername = setting.Backup.WebDAVStorage.WebDAVConfig.Username
+			backupInitialConfig.WebDAVPassword = setting.Backup.WebDAVStorage.WebDAVConfig.Password
+			backupInitialConfig.WebDAVTimeout = setting.Backup.WebDAVStorage.WebDAVConfig.Timeout
+			backupInitialConfig.WebDAVInsecureSkipVerify = setting.Backup.WebDAVStorage.WebDAVConfig.InsecureSkipVerify
+		}
+	}
+	if backupInitialConfig.StorageType == "" {
+		backupInitialConfig.StorageType = "none"
 	}
 	ctx.Data["BackupInitialStorageConfig"] = backupInitialConfig
 	ctx.Data["BackupInitialFormat"] = setting.Backup.Format
@@ -286,49 +296,87 @@ func syncBackupConfigToIni(ctx *context.Context) error {
 	backupCfg := setting.Config().Backup
 	storageConfig := backupCfg.StorageConfig.Value(ctx)
 
-	// 如果动态配置中的存储类型为空，回退到 app.ini 中已保存的值（setting.Backup）
-	// 这可以防止首次保存时意外清空 app.ini 中的 WebDAV 配置
-	origStorage := setting.Backup.WebDAVStorage
-
 	sec := cfg.Section("backup")
 
-	// 存储类型：优先使用动态配置，否则保留 app.ini 原有值
-	storageType := storageConfig.StorageType
-	if storageType == "" && origStorage != nil {
-		storageType = string(origStorage.Type)
-	}
-	sec.Key("STORAGE_TYPE").SetValue(storageType)
+	// 当前 app.ini 中保存的值，用于回退（避免 dyn config 缺字段导致意外清空）
+	fileStorageType := sec.Key("STORAGE_TYPE").String()
+	fileLocalPath := sec.Key("PATH").String()
+	fileWebDAVURL := sec.Key("WEBDAV_URL").String()
+	fileWebDAVUsername := sec.Key("WEBDAV_USERNAME").String()
+	fileWebDAVPassword := sec.Key("WEBDAV_PASSWORD").String()
+	fileWebDAVTimeout := sec.Key("WEBDAV_TIMEOUT").MustInt(30)
+	fileWebDAVInsecureSkipVerify := sec.Key("WEBDAV_INSECURE_SKIP_VERIFY").MustBool(false)
 
-	// 本地路径
-	if storageType == "local" {
-		localPath := storageConfig.LocalPath
-		if localPath == "" && origStorage != nil {
-			localPath = origStorage.Path
+	var rawStorageConfig map[string]any
+	rawStorageConfigStr, hasRawStorageConfig := config.GetDynGetter().GetValue(ctx, backupCfg.StorageConfig.DynKey())
+	if hasRawStorageConfig {
+		if err := json.Unmarshal([]byte(rawStorageConfigStr), &rawStorageConfig); err != nil {
+			log.Error("Failed to unmarshal backup storage config json: %v", err)
+			hasRawStorageConfig = false
 		}
-		sec.Key("PATH").SetValue(localPath)
-	} else {
-		sec.Key("PATH").SetValue("")
 	}
 
-	// WebDAV 配置
-	webdavURL := storageConfig.WebDAVURL
-	webdavUsername := storageConfig.WebDAVUsername
-	webdavPassword := storageConfig.WebDAVPassword
-	if origStorage != nil {
-		if webdavURL == "" {
-			webdavURL = origStorage.WebDAVConfig.URL
+	fieldExists := func(name string) bool {
+		if !hasRawStorageConfig || rawStorageConfig == nil {
+			return false
 		}
-		if webdavUsername == "" {
-			webdavUsername = origStorage.WebDAVConfig.Username
-		}
-		if webdavPassword == "" {
-			webdavPassword = origStorage.WebDAVConfig.Password
-		}
+		_, ok := rawStorageConfig[name]
+		return ok
 	}
-	sec.Key("WEBDAV_URL").SetValue(webdavURL)
-	sec.Key("WEBDAV_USERNAME").SetValue(webdavUsername)
-	if webdavPassword != "" {
-		sec.Key("WEBDAV_PASSWORD").SetValue(webdavPassword)
+
+	// 只在 dyn config 包含 backup.storage_config 时才同步存储设置。
+	// 否则，在仅修改其他备份选项（如 SKIP_LFS）时不会意外清空 app.ini 的存储配置。
+	if hasRawStorageConfig {
+		requestedStorageType := storageConfig.StorageType
+		if !fieldExists("StorageType") {
+			requestedStorageType = fileStorageType
+		}
+
+		// "none": 显式禁用（UI 使用）；"": 历史/兼容写法
+		if requestedStorageType == "" || requestedStorageType == "none" {
+			sec.Key("STORAGE_TYPE").SetValue("")
+		} else {
+			sec.Key("STORAGE_TYPE").SetValue(requestedStorageType)
+		}
+
+		if requestedStorageType == "local" {
+			localPath := storageConfig.LocalPath
+			if !fieldExists("LocalPath") {
+				localPath = fileLocalPath
+			}
+			sec.Key("PATH").SetValue(localPath)
+		}
+
+		if requestedStorageType == "webdav" {
+			webdavURL := storageConfig.WebDAVURL
+			if !fieldExists("WebDAVURL") {
+				webdavURL = fileWebDAVURL
+			}
+			webdavUsername := storageConfig.WebDAVUsername
+			if !fieldExists("WebDAVUsername") {
+				webdavUsername = fileWebDAVUsername
+			}
+			webdavPassword := storageConfig.WebDAVPassword
+			if !fieldExists("WebDAVPassword") {
+				webdavPassword = fileWebDAVPassword
+			}
+			webdavTimeout := storageConfig.WebDAVTimeout
+			if !fieldExists("WebDAVTimeout") {
+				webdavTimeout = fileWebDAVTimeout
+			}
+			webdavInsecureSkipVerify := storageConfig.WebDAVInsecureSkipVerify
+			if !fieldExists("WebDAVInsecureSkipVerify") {
+				webdavInsecureSkipVerify = fileWebDAVInsecureSkipVerify
+			}
+
+			sec.Key("WEBDAV_URL").SetValue(webdavURL)
+			sec.Key("WEBDAV_USERNAME").SetValue(webdavUsername)
+			if webdavPassword != "" {
+				sec.Key("WEBDAV_PASSWORD").SetValue(webdavPassword)
+			}
+			sec.Key("WEBDAV_TIMEOUT").SetValue(strconv.Itoa(webdavTimeout))
+			sec.Key("WEBDAV_INSECURE_SKIP_VERIFY").SetValue(strconv.FormatBool(webdavInsecureSkipVerify))
+		}
 	}
 
 	// 其他选项
@@ -358,6 +406,10 @@ func TestBackupStorage(ctx *context.Context) {
 	var testStorage storage.ObjectStorage
 
 	if backupData != nil {
+		if backupData.StorageType == "" || backupData.StorageType == "none" {
+			ctx.JSONError(ctx.Tr("admin.config.backup_test_no_storage"))
+			return
+		}
 		// 有表单数据，使用表单数据创建临时 storage 测试
 		testStorage = createTempBackupStorage(backupData)
 		if testStorage == nil {
@@ -422,11 +474,14 @@ func parseBackupConfigFromForm(ctx *context.Context) *setting.BackupConfigType {
 
 // createTempBackupStorage 根据配置创建临时备份 storage（不修改 app.ini）
 func createTempBackupStorage(cfg *setting.BackupConfigType) storage.ObjectStorage {
-	if cfg.StorageType == "" || cfg.StorageType == "local" {
+	if cfg.StorageType == "" || cfg.StorageType == "none" {
+		return nil
+	}
+	if cfg.StorageType == "local" {
 		// 本地存储
 		localCfg := &setting.Storage{
-			Type:       setting.LocalStorageType,
-			Path:       cfg.LocalPath,
+			Type: setting.LocalStorageType,
+			Path: cfg.LocalPath,
 		}
 		s, err := storage.NewStorage(setting.LocalStorageType, localCfg)
 		if err != nil {
@@ -439,9 +494,11 @@ func createTempBackupStorage(cfg *setting.BackupConfigType) storage.ObjectStorag
 		webdavCfg := &setting.Storage{
 			Type: setting.WebDAVStorageType,
 			WebDAVConfig: setting.WebDAVStorageConfig{
-				URL:      cfg.WebDAVURL,
-				Username: cfg.WebDAVUsername,
-				Password: cfg.WebDAVPassword,
+				URL:                cfg.WebDAVURL,
+				Username:           cfg.WebDAVUsername,
+				Password:           cfg.WebDAVPassword,
+				Timeout:            cfg.WebDAVTimeout,
+				InsecureSkipVerify: cfg.WebDAVInsecureSkipVerify,
 			},
 		}
 		s, err := storage.NewStorage(setting.WebDAVStorageType, webdavCfg)

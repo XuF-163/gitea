@@ -105,6 +105,9 @@ export class ConfigFormValueMapper {
       el.value = String(val ?? el.value);
     } else if (el.matches('input') && (el.getAttribute('type') ?? 'text') === 'text') {
       el.value = String(val ?? el.value);
+    } else if (el.matches('input') && (el.getAttribute('type') ?? 'text') === 'number') {
+      if (valType !== 'number') requireExplicitValueType(el);
+      el.value = String(val ?? el.value);
     } else if (el.matches('[type="password"]')) {
       el.value = String(val ?? el.value);
     } else if (el.matches('select')) {
@@ -130,6 +133,9 @@ export class ConfigFormValueMapper {
       val = el.value;
     } else if (el.matches('input') && (el.getAttribute('type') ?? 'text') === 'text') {
       val = el.value;
+    } else if (el.matches('input') && (el.getAttribute('type') ?? 'text') === 'number') {
+      if (valType !== 'number') requireExplicitValueType(el);
+      val = Number(el.value);
     } else if (el.matches('[type="password"]')) {
       val = el.value;
     } else if (el.matches('select')) {

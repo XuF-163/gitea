@@ -10,11 +10,13 @@ import (
 // BackupConfigType 备份存储配置（在管理面板动态编辑）
 // 字段名与模板中的表单 name 属性对应
 type BackupConfigType struct {
-	StorageType    string
-	LocalPath      string
-	WebDAVURL      string
-	WebDAVUsername string
-	WebDAVPassword string
+	StorageType              string
+	LocalPath                string
+	WebDAVURL                string
+	WebDAVUsername           string
+	WebDAVPassword           string
+	WebDAVTimeout            int
+	WebDAVInsecureSkipVerify bool
 }
 
 // BackupSettingsStruct 备份设置动态选项

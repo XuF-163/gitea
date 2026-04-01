@@ -3309,6 +3309,8 @@
   "admin.config.backup_local_path": "Local Backup Path",
   "admin.config.backup_webdav_username": "WebDAV Username",
   "admin.config.backup_webdav_password": "WebDAV Password",
+  "admin.config.backup_webdav_timeout": "WebDAV Timeout (seconds)",
+  "admin.config.backup_webdav_insecure_skip_verify": "Skip TLS Verification",
   "admin.config.backup_test_connection": "Test Connection",
   "admin.config.backup_test_success": "Backup storage connection successful",
   "admin.config.backup_test_failed": "Connection failed: %s",
