@@ -4,6 +4,7 @@
 package backup
 
 import (
+	"bufio"
 	"context"
 	"fmt"
 	"io"
@@ -14,6 +15,7 @@ import (
 	"strings"
 	"time"
 
+	"code.gitea.io/gitea/models/db"
 	"code.gitea.io/gitea/modules/log"
 	"code.gitea.io/gitea/modules/setting"
 	"code.gitea.io/gitea/modules/storage"
@@ -149,7 +151,7 @@ func RestoreFromBackup(ctx context.Context, backupStorage storage.ObjectStorage,
 
 	// 恢复数据库 SQL dump
 	UpdateRestoreProgress("restoring database", 90)
-	if err := restoreDatabaseFromArchive(archiveFS); err != nil {
+	if err := restoreDatabaseFromArchive(ctx, archiveFS); err != nil {
 		log.Error("Failed to restore database: %v", err)
 	}
 
@@ -320,7 +322,7 @@ func restoreDataDirExcludingKnown(archiveFS fs.FS) error {
 }
 
 // restoreDatabaseFromArchive 从归档中恢复数据库 SQL dump
-func restoreDatabaseFromArchive(archiveFS fs.FS) error {
+func restoreDatabaseFromArchive(ctx context.Context, archiveFS fs.FS) error {
 	// 尝试打开 gitea-db.sql
 	src, err := archiveFS.Open("gitea-db.sql")
 	if err != nil {
@@ -335,12 +337,104 @@ func restoreDatabaseFromArchive(archiveFS fs.FS) error {
 	if err != nil {
 		return fmt.Errorf("failed to create restore sql file: %w", err)
 	}
-	defer dst.Close()
 
 	if _, err := io.Copy(dst, src); err != nil {
+		dst.Close()
 		return fmt.Errorf("failed to copy database dump: %w", err)
 	}
+	dst.Close()
 
-	log.Info("Database SQL dump saved to %s", destPath)
+	// 执行 SQL dump
+	if err := executeSQLDump(ctx, destPath); err != nil {
+		log.Error("Failed to execute database dump from %s: %v", destPath, err)
+		log.Warn("SQL dump file is kept at %s for manual restore", destPath)
+		return nil // 不阻塞整个恢复流程
+	}
+
+	// 执行成功后删除临时文件
+	os.Remove(destPath)
+	log.Info("Database restored successfully from %s", destPath)
 	return nil
 }
+
+// executeSQLDump 读取 SQL dump 文件并执行其中的语句
+func executeSQLDump(ctx context.Context, dumpPath string) error {
+	f, err := os.Open(dumpPath)
+	if err != nil {
+		return fmt.Errorf("failed to open dump file: %w", err)
+	}
+	defer f.Close()
+
+	scanner := bufio.NewScanner(f)
+	// SQL dump 可能很大，需要增大缓冲区
+	const maxScanTokenSize = 1024 * 1024 * 10 // 10MB
+	buf := make([]byte, maxScanTokenSize)
+	scanner.Buffer(buf, maxScanTokenSize)
+
+	var statements []string
+	var currentStmt strings.Builder
+
+	for scanner.Scan() {
+		line := scanner.Text()
+
+		// 跳过注释和空行
+		trimmed := strings.TrimSpace(line)
+		if trimmed == "" || strings.HasPrefix(trimmed, "--") || strings.HasPrefix(trimmed, "/*") {
+			continue
+		}
+
+		currentStmt.WriteString(line)
+		currentStmt.WriteString("\n")
+
+		// 检测语句结束（以分号结尾）
+		if strings.HasSuffix(strings.TrimSpace(line), ";") {
+			stmt := strings.TrimSpace(currentStmt.String())
+			if stmt != "" {
+				statements = append(statements, stmt)
+			}
+			currentStmt.Reset()
+		}
+	}
+
+	if err := scanner.Err(); err != nil {
+		return fmt.Errorf("failed to read dump file: %w", err)
+	}
+
+	// 处理没有分号结尾的最后一个语句
+	if currentStmt.Len() > 0 {
+		stmt := strings.TrimSpace(currentStmt.String())
+		if stmt != "" {
+			statements = append(statements, stmt)
+		}
+	}
+
+	if len(statements) == 0 {
+		log.Info("No SQL statements found in dump file")
+		return nil
+	}
+
+	log.Info("Executing %d SQL statements from dump", len(statements))
+
+	// 在事务中执行所有语句
+	e := db.GetEngine(ctx)
+	sess := e.Context(ctx)
+
+	if err := sess.Begin(); err != nil {
+		return fmt.Errorf("failed to begin transaction: %w", err)
+	}
+
+	for i, stmt := range statements {
+		if _, err := sess.Exec(stmt); err != nil {
+			sess.Rollback()
+			return fmt.Errorf("failed to execute statement %d: %w", i+1, err)
+		}
+	}
+
+	if err := sess.Commit(); err != nil {
+		return fmt.Errorf("failed to commit transaction: %w", err)
+	}
+
+	log.Info("All %d SQL statements executed successfully", len(statements))
+	return nil
+}
+

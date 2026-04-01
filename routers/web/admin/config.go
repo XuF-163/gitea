@@ -286,24 +286,49 @@ func syncBackupConfigToIni(ctx *context.Context) error {
 	backupCfg := setting.Config().Backup
 	storageConfig := backupCfg.StorageConfig.Value(ctx)
 
+	// 如果动态配置中的存储类型为空，回退到 app.ini 中已保存的值（setting.Backup）
+	// 这可以防止首次保存时意外清空 app.ini 中的 WebDAV 配置
+	origStorage := setting.Backup.WebDAVStorage
+
 	sec := cfg.Section("backup")
 
-	// 存储类型
-	sec.Key("STORAGE_TYPE").SetValue(string(storageConfig.StorageType))
+	// 存储类型：优先使用动态配置，否则保留 app.ini 原有值
+	storageType := storageConfig.StorageType
+	if storageType == "" && origStorage != nil {
+		storageType = string(origStorage.Type)
+	}
+	sec.Key("STORAGE_TYPE").SetValue(storageType)
 
 	// 本地路径
-	if storageConfig.StorageType == "local" {
-		sec.Key("PATH").SetValue(storageConfig.LocalPath)
+	if storageType == "local" {
+		localPath := storageConfig.LocalPath
+		if localPath == "" && origStorage != nil {
+			localPath = origStorage.Path
+		}
+		sec.Key("PATH").SetValue(localPath)
 	} else {
 		sec.Key("PATH").SetValue("")
 	}
 
 	// WebDAV 配置
-	sec.Key("WEBDAV_URL").SetValue(storageConfig.WebDAVURL)
-	sec.Key("WEBDAV_USERNAME").SetValue(storageConfig.WebDAVUsername)
-	// 只有密码非空才写入（避免覆盖为空值）
-	if storageConfig.WebDAVPassword != "" {
-		sec.Key("WEBDAV_PASSWORD").SetValue(storageConfig.WebDAVPassword)
+	webdavURL := storageConfig.WebDAVURL
+	webdavUsername := storageConfig.WebDAVUsername
+	webdavPassword := storageConfig.WebDAVPassword
+	if origStorage != nil {
+		if webdavURL == "" {
+			webdavURL = origStorage.WebDAVConfig.URL
+		}
+		if webdavUsername == "" {
+			webdavUsername = origStorage.WebDAVConfig.Username
+		}
+		if webdavPassword == "" {
+			webdavPassword = origStorage.WebDAVConfig.Password
+		}
+	}
+	sec.Key("WEBDAV_URL").SetValue(webdavURL)
+	sec.Key("WEBDAV_USERNAME").SetValue(webdavUsername)
+	if webdavPassword != "" {
+		sec.Key("WEBDAV_PASSWORD").SetValue(webdavPassword)
 	}
 
 	// 其他选项
@@ -326,22 +351,36 @@ func syncBackupConfigToIni(ctx *context.Context) error {
 	return storage.InitBackup()
 }
 
-// TestBackupStorage 测试备份存储连接
+// TestBackupStorage 测试备份存储连接（支持传入当前表单数据）
 func TestBackupStorage(ctx *context.Context) {
-	// 先同步配置
-	if err := syncBackupConfigToIni(ctx); err != nil {
-		ctx.JSONError(ctx.Tr("admin.config.backup_test_failed", err.Error()))
-		return
+	// 尝试从表单数据中获取备份配置
+	backupData := parseBackupConfigFromForm(ctx)
+	var testStorage storage.ObjectStorage
+
+	if backupData != nil {
+		// 有表单数据，使用表单数据创建临时 storage 测试
+		testStorage = createTempBackupStorage(backupData)
+		if testStorage == nil {
+			ctx.JSONError(ctx.Tr("admin.config.backup_test_failed", "invalid storage config"))
+			return
+		}
+	} else {
+		// 无表单数据，使用已保存的配置
+		if err := syncBackupConfigToIni(ctx); err != nil {
+			ctx.JSONError(ctx.Tr("admin.config.backup_test_failed", err.Error()))
+			return
+		}
+		testStorage = storage.Backup
 	}
 
 	// 测试存储连接
-	if storage.IsDiscardStorage(storage.Backup) {
+	if storage.IsDiscardStorage(testStorage) {
 		ctx.JSONError(ctx.Tr("admin.config.backup_test_failed", "storage not initialized"))
 		return
 	}
 
 	// 尝试列出对象来验证连接
-	if err := storage.Backup.IterateObjects("", func(_ string, _ storage.Object) error {
+	if err := testStorage.IterateObjects("", func(_ string, _ storage.Object) error {
 		return nil
 	}); err != nil {
 		ctx.JSONError(ctx.Tr("admin.config.backup_test_failed", err.Error()))
@@ -350,4 +389,67 @@ func TestBackupStorage(ctx *context.Context) {
 
 	ctx.Flash.Success(ctx.Tr("admin.config.backup_test_success"))
 	ctx.JSONOK()
+}
+
+// parseBackupConfigFromForm 从表单数据中解析备份配置
+func parseBackupConfigFromForm(ctx *context.Context) *setting.BackupConfigType {
+	_ = ctx.Req.ParseForm()
+	configKeys := ctx.Req.Form["key"]
+	configValues := ctx.Req.Form["value"]
+
+	cfg := &setting.BackupConfigType{}
+	hasBackupConfig := false
+
+	for i, key := range configKeys {
+		if i >= len(configValues) {
+			break
+		}
+		value := configValues[i]
+		switch key {
+		case "backup.storage_config":
+			if err := json.Unmarshal([]byte(value), cfg); err != nil {
+				return nil
+			}
+			hasBackupConfig = true
+		}
+	}
+
+	if !hasBackupConfig {
+		return nil
+	}
+	return cfg
+}
+
+// createTempBackupStorage 根据配置创建临时备份 storage（不修改 app.ini）
+func createTempBackupStorage(cfg *setting.BackupConfigType) storage.ObjectStorage {
+	if cfg.StorageType == "" || cfg.StorageType == "local" {
+		// 本地存储
+		localCfg := &setting.Storage{
+			Type:       setting.LocalStorageType,
+			Path:       cfg.LocalPath,
+		}
+		s, err := storage.NewStorage(setting.LocalStorageType, localCfg)
+		if err != nil {
+			log.Error("Failed to create temp local storage: %v", err)
+			return nil
+		}
+		return s
+	}
+	if cfg.StorageType == "webdav" {
+		webdavCfg := &setting.Storage{
+			Type: setting.WebDAVStorageType,
+			WebDAVConfig: setting.WebDAVStorageConfig{
+				URL:      cfg.WebDAVURL,
+				Username: cfg.WebDAVUsername,
+				Password: cfg.WebDAVPassword,
+			},
+		}
+		s, err := storage.NewStorage(setting.WebDAVStorageType, webdavCfg)
+		if err != nil {
+			log.Error("Failed to create temp WebDAV storage: %v", err)
+			return nil
+		}
+		return s
+	}
+	return nil
 }

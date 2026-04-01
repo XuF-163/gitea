@@ -250,12 +250,22 @@ function initBackupStorageToggle(el: Element): void {
 
 function initBackupTestButton(el: Element): void {
   const btn = el.querySelector<HTMLButtonElement>('#test-backup-storage-btn');
-  if (!btn) return;
+  const form = el.querySelector<HTMLFormElement>('form.system-config-form');
+  if (!btn || !form) return;
 
   btn.addEventListener('click', async () => {
     btn.classList.add('disabled', 'loading');
     try {
-      const resp = await POST(`${appSubUrl}/-/admin/config/test_backup_storage`);
+      const formMapper = new ConfigFormValueMapper(form);
+      const formData = formMapper.collectToFormData();
+      // 只取备份相关的配置
+      const backupData = new URLSearchParams();
+      for (const [key, value] of formData.entries()) {
+        if (String(key).startsWith('backup.')) {
+          backupData.append(String(key), String(value));
+        }
+      }
+      const resp = await POST(`${appSubUrl}/-/admin/config/test_backup_storage`, {data: backupData});
       const data: Record<string, any> = await resp.json();
       if (data.errorMessage) {
         throw new Error(data.errorMessage);

@@ -282,7 +282,7 @@ func initActions() (err error) {
 
 // InitBackup re-initializes the backup storage, used after config changes in admin panel
 func InitBackup() (err error) {
-	if setting.Backup.WebDAVStorage == nil {
+	if setting.Backup.WebDAVStorage == nil || string(setting.Backup.WebDAVStorage.Type) == "" {
 		Backup = &discardStorage{reason: "Backup storage is not configured"}
 		return nil
 	}

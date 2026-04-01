@@ -23,10 +23,6 @@ import (
 
 type BackupConfig struct {
 	BaseConfig
-	SkipLFS         bool
-	SkipAttachments bool
-	SkipPackages    bool
-	SkipDB          bool
 	// Retention 配置：保留的备份文件数量（0 表示不限制）
 	Retention int
 }
@@ -122,7 +118,7 @@ func runBackupTask(ctx context.Context, cfg *BackupConfig) error {
 	}
 
 	// Add LFS data
-	if !cfg.SkipLFS && setting.LFS.StartServer {
+	if !setting.Backup.SkipLFS && setting.LFS.StartServer {
 		log.Info("Adding LFS data to backup")
 		if err := storage.LFS.IterateObjects("", func(objPath string, obj storage.Object) error {
 			info, err := obj.Stat()
@@ -136,7 +132,7 @@ func runBackupTask(ctx context.Context, cfg *BackupConfig) error {
 	}
 
 	// Add Attachments
-	if !cfg.SkipAttachments {
+	if !setting.Backup.SkipAttachments {
 		log.Info("Adding attachments to backup")
 		if err := storage.Attachments.IterateObjects("", func(objPath string, obj storage.Object) error {
 			info, err := obj.Stat()
@@ -150,7 +146,7 @@ func runBackupTask(ctx context.Context, cfg *BackupConfig) error {
 	}
 
 	// Add Packages
-	if !cfg.SkipPackages && setting.Packages.Enabled {
+	if !setting.Backup.SkipPackages && setting.Packages.Enabled {
 		log.Info("Adding packages to backup")
 		if err := storage.Packages.IterateObjects("", func(objPath string, obj storage.Object) error {
 			info, err := obj.Stat()
@@ -164,7 +160,7 @@ func runBackupTask(ctx context.Context, cfg *BackupConfig) error {
 	}
 
 	// Add database dump
-	if !cfg.SkipDB {
+	if !setting.Backup.SkipDB {
 		log.Info("Adding database to backup")
 		dbFile := filepath.Join(tmpDir, "gitea-db.sql")
 		if err := db.DumpDatabase(dbFile, ""); err != nil {
