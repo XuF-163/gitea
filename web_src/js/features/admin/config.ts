@@ -32,7 +32,7 @@ function initSystemConfigAutoCheckbox(el: HTMLInputElement) {
   });
 }
 
-type GeneralFormFieldElement = HTMLInputElement;
+type GeneralFormFieldElement = HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement;
 
 function unsupportedElement(el: Element): never {
   // HINT: for future developers: if you need to handle a config that cannot be directly mapped to a form element, you should either:
@@ -105,6 +105,8 @@ export class ConfigFormValueMapper {
       el.value = String(val ?? el.value);
     } else if (el.matches('input') && (el.getAttribute('type') ?? 'text') === 'text') {
       el.value = String(val ?? el.value);
+    } else if (el.matches('select')) {
+      el.value = String(val ?? el.value);
     } else {
       unsupportedElement(el);
     }
@@ -125,6 +127,8 @@ export class ConfigFormValueMapper {
     } else if (el.matches('textarea')) {
       val = el.value;
     } else if (el.matches('input') && (el.getAttribute('type') ?? 'text') === 'text') {
+      val = el.value;
+    } else if (el.matches('select')) {
       val = el.value;
     } else {
       unsupportedElement(el);
