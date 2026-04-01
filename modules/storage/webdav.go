@@ -4,7 +4,6 @@
 package storage
 
 import (
-	"bytes"
 	"context"
 	"crypto/tls"
 	"encoding/xml"
@@ -15,6 +14,7 @@ import (
 	"net/url"
 	"os"
 	"path"
+	"strconv"
 	"strings"
 	"time"
 
@@ -28,14 +28,22 @@ type WebDAVStorage struct {
 	ctx    context.Context
 	config *setting.WebDAVStorageConfig
 	client *http.Client
+
+	basePath string // normalized path part of config.URL, ends with "/"
 }
 
 // NewWebDAVStorage returns a WebDAV storage
 func NewWebDAVStorage(ctx context.Context, cfg *setting.Storage) (ObjectStorage, error) {
 	webdavCfg := &cfg.WebDAVConfig
 
-	if _, err := url.Parse(webdavCfg.URL); err != nil {
+	baseURL, err := url.Parse(webdavCfg.URL)
+	if err != nil {
 		return nil, fmt.Errorf("invalid WebDAV URL: %w", err)
+	}
+
+	basePath := strings.TrimSuffix(baseURL.Path, "/") + "/"
+	if basePath == "" {
+		basePath = "/"
 	}
 
 	// 连接超时：仅限制建立 TCP 连接的时间，不限制 body 传输
@@ -51,12 +59,14 @@ func NewWebDAVStorage(ctx context.Context, cfg *setting.Storage) (ObjectStorage,
 	}
 
 	return &WebDAVStorage{
-		ctx:    ctx,
-		config: webdavCfg,
+		ctx:      ctx,
+		config:   webdavCfg,
+		basePath: basePath,
 		client: &http.Client{
-			Timeout: 0, // 禁止全局请求超时；body 传输时间不受限制，由 caller 的 context 控制
+			Timeout: 0, // 禁止全局请求超时：body 传输时间不受限制，由 caller 的 context 控制
 			Transport: &http.Transport{
-				TLSClientConfig: tlsCfg,
+				DisableCompression: true,
+				TLSClientConfig:    tlsCfg,
 				DialContext: (&net.Dialer{
 					Timeout: connectTimeout,
 				}).DialContext,
@@ -66,10 +76,15 @@ func NewWebDAVStorage(ctx context.Context, cfg *setting.Storage) (ObjectStorage,
 }
 
 func (s *WebDAVStorage) getFullPath(p string) string {
+	p = strings.TrimPrefix(p, "/")
 	return strings.TrimSuffix(s.config.URL, "/") + "/" + p
 }
 
 func (s *WebDAVStorage) doRequest(method, p string, body io.Reader, contentLength int64) (*http.Response, error) {
+	return s.doRequestWithHeaders(method, p, body, contentLength, nil)
+}
+
+func (s *WebDAVStorage) doRequestWithHeaders(method, p string, body io.Reader, contentLength int64, headers http.Header) (*http.Response, error) {
 	fullPath := s.getFullPath(p)
 
 	req, err := http.NewRequestWithContext(s.ctx, method, fullPath, body)
@@ -85,54 +100,173 @@ func (s *WebDAVStorage) doRequest(method, p string, body io.Reader, contentLengt
 		req.SetBasicAuth(s.config.Username, s.config.Password)
 	}
 
+	for k, vals := range headers {
+		for _, v := range vals {
+			req.Header.Add(k, v)
+		}
+	}
+
 	return s.client.Do(req)
 }
 
-// webdavObject wraps an io.ReadCloser to implement the Object interface
 type webdavObject struct {
-	*bytes.Reader
-	closer io.Closer
+	storage *WebDAVStorage
+	path    string
+
+	size    int64
+	modTime time.Time
+	isDir   bool
+
+	body   io.ReadCloser
+	offset int64
 }
 
-// Close closes the reader
+func newWebDAVObject(storage *WebDAVStorage, p string) *webdavObject {
+	return &webdavObject{
+		storage: storage,
+		path:    p,
+		size:    -1,
+	}
+}
+
+func (w *webdavObject) fillFromResponse(resp *http.Response) {
+	if w.size < 0 {
+		switch resp.StatusCode {
+		case http.StatusOK:
+			if cl := resp.Header.Get("Content-Length"); cl != "" {
+				if v, err := strconv.ParseInt(cl, 10, 64); err == nil {
+					w.size = v
+				}
+			}
+		case http.StatusPartialContent:
+			if total, ok := parseContentRangeTotal(resp.Header.Get("Content-Range")); ok {
+				w.size = total
+			}
+		}
+	}
+
+	if w.modTime.IsZero() {
+		if lm := resp.Header.Get("Last-Modified"); lm != "" {
+			if t, err := time.Parse(http.TimeFormat, lm); err == nil {
+				w.modTime = t
+			}
+		}
+	}
+}
+
+func (w *webdavObject) openAt(offset int64) error {
+	_ = w.Close()
+
+	headers := http.Header{}
+	// Avoid getting compressed responses which breaks byte ranges.
+	headers.Set("Accept-Encoding", "identity")
+	if offset > 0 {
+		headers.Set("Range", fmt.Sprintf("bytes=%d-", offset))
+	}
+
+	resp, err := w.storage.doRequestWithHeaders(http.MethodGet, w.path, nil, -1, headers)
+	if err != nil {
+		return err
+	}
+
+	ok := resp.StatusCode == http.StatusOK || resp.StatusCode == http.StatusPartialContent
+	if !ok {
+		resp.Body.Close()
+		return fmt.Errorf("failed to open %s: %s", w.path, resp.Status)
+	}
+
+	// If the server ignored Range and returned 200, discard bytes to reach desired offset.
+	if offset > 0 && resp.StatusCode == http.StatusOK {
+		if _, err := io.CopyN(io.Discard, resp.Body, offset); err != nil {
+			resp.Body.Close()
+			return fmt.Errorf("failed to seek to %d in %s: %w", offset, w.path, err)
+		}
+	}
+
+	w.body = resp.Body
+	w.offset = offset
+	w.fillFromResponse(resp)
+	return nil
+}
+
+func (w *webdavObject) Read(p []byte) (int, error) {
+	if w.size >= 0 && w.offset >= w.size {
+		return 0, io.EOF
+	}
+	if w.body == nil {
+		if err := w.openAt(w.offset); err != nil {
+			return 0, err
+		}
+	}
+	n, err := w.body.Read(p)
+	w.offset += int64(n)
+	return n, err
+}
+
+func (w *webdavObject) Seek(offset int64, whence int) (int64, error) {
+	var newOffset int64
+	switch whence {
+	case io.SeekStart:
+		newOffset = offset
+	case io.SeekCurrent:
+		newOffset = w.offset + offset
+	case io.SeekEnd:
+		if w.size < 0 {
+			if _, err := w.Stat(); err != nil {
+				return 0, err
+			}
+		}
+		newOffset = w.size + offset
+	default:
+		return 0, fmt.Errorf("invalid whence: %d", whence)
+	}
+
+	if newOffset < 0 {
+		return 0, fmt.Errorf("invalid offset: %d", newOffset)
+	}
+
+	_ = w.Close()
+	w.offset = newOffset
+	return newOffset, nil
+}
+
 func (w *webdavObject) Close() error {
-	return w.closer.Close()
+	if w.body == nil {
+		return nil
+	}
+	err := w.body.Close()
+	w.body = nil
+	return err
 }
 
-// Stat returns file info for the object
 func (w *webdavObject) Stat() (os.FileInfo, error) {
-	return &webdavFileInfo{
-		name:    "webdav-object",
-		size:    int64(w.Reader.Len()),
-		mode:    os.FileMode(0644),
-		modTime: time.Now(),
-		isDir:   false,
-	}, nil
+	if w.size >= 0 {
+		return &webdavFileInfo{
+			name:    path.Base(w.path),
+			size:    w.size,
+			mode:    os.FileMode(0644),
+			modTime: w.modTime,
+			isDir:   w.isDir,
+		}, nil
+	}
+
+	fi, err := w.storage.Stat(w.path)
+	if err != nil {
+		return nil, err
+	}
+	w.size = fi.Size()
+	w.modTime = fi.ModTime()
+	w.isDir = fi.IsDir()
+	return fi, nil
 }
 
 // Open opens a file for reading
 func (s *WebDAVStorage) Open(p string) (Object, error) {
-	resp, err := s.doRequest(http.MethodGet, p, nil, -1)
-	if err != nil {
+	obj := newWebDAVObject(s, p)
+	if err := obj.openAt(0); err != nil {
 		return nil, err
 	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("failed to open %s: %s", p, resp.Status)
-	}
-
-	// 流式读取，避免全量加载到内存
-	buf := new(bytes.Buffer)
-	if _, err := io.Copy(buf, resp.Body); err != nil {
-		return nil, fmt.Errorf("failed to read body: %w", err)
-	}
-
-	reader := bytes.NewReader(buf.Bytes())
-	return &webdavObject{
-		Reader: reader,
-		closer: io.NopCloser(reader),
-	}, nil
+	return obj, nil
 }
 
 // Save saves a file to WebDAV storage using streaming upload.
@@ -160,13 +294,12 @@ func (s *WebDAVStorage) Save(p string, r io.Reader, size int64) (int64, error) {
 			errCh <- err
 			return
 		}
-		// 确保 goroutine 退出前关闭 response body，无论是否读取
 		respCh <- resp
 	}()
 
 	// 将 caller 的数据流接入 PipeWriter，HTTP goroutine 会自动消费
 	written, copyErr := io.Copy(pw, r)
-	pw.CloseWithError(copyErr) // 通知读取端数据已全部写入（或出错了）
+	pw.CloseWithError(copyErr) // 通知读取端数据已全部写入（或出错）
 
 	// 等待 HTTP goroutine 完成
 	var resp *http.Response
@@ -196,7 +329,17 @@ func (s *WebDAVStorage) Save(p string, r io.Reader, size int64) (int64, error) {
 
 // Stat returns file info
 func (s *WebDAVStorage) Stat(p string) (os.FileInfo, error) {
-	resp, err := s.doRequest("PROPFIND", p, nil, -1)
+	req, err := http.NewRequestWithContext(s.ctx, "PROPFIND", s.getFullPath(p), nil)
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("Depth", "0")
+	req.Header.Set("Content-Type", "text/xml")
+	if s.config.Username != "" {
+		req.SetBasicAuth(s.config.Username, s.config.Password)
+	}
+
+	resp, err := s.client.Do(req)
 	if err != nil {
 		return nil, err
 	}
@@ -205,7 +348,6 @@ func (s *WebDAVStorage) Stat(p string) (os.FileInfo, error) {
 	if resp.StatusCode == http.StatusNotFound {
 		return nil, os.ErrNotExist
 	}
-
 	if resp.StatusCode != http.StatusMultiStatus {
 		return nil, fmt.Errorf("failed to stat %s: %s", p, resp.Status)
 	}
@@ -215,62 +357,33 @@ func (s *WebDAVStorage) Stat(p string) (os.FileInfo, error) {
 		return nil, err
 	}
 
-	// 解析 WebDAV PROPFIND 响应，兼容不同服务端实现
-	var result struct {
-		XMLName  xml.Name `xml:"DAV:response"`
-		HRef     string   `xml:"href"`
-		PropStat []struct {
-			Status string `xml:"status"`
-			Prop   struct {
-				GetLastModified  string `xml:"getlastmodified"`
-				GetContentLength string `xml:"getcontentlength"`
-				GetContentType   string `xml:"getcontenttype"`
-				ResourceType     struct {
-					Collection any `xml:"collection"` // 空标签表示是目录，非空表示是文件
-				} `xml:"resourcetype"`
-			} `xml:"propstat>prop"`
-		} `xml:"propstat"`
-	}
-
-	if err := xml.Unmarshal(body, &result); err != nil {
+	entries, err := parseWebDAVMultiStatus(body)
+	if err != nil {
 		return nil, fmt.Errorf("failed to parse PROPFIND response: %w", err)
 	}
 
-	for _, ps := range result.PropStat {
-		if ps.Status != "HTTP/1.1 200 OK" && ps.Status != "200 OK" {
+	targetPath := normalizeStoragePath(p)
+	reqPrefix := path.Dir(targetPath)
+	if reqPrefix == "." {
+		reqPrefix = ""
+	}
+
+	for _, e := range entries {
+		entryPath, err := s.hrefToStoragePath(e.HRef, reqPrefix)
+		if err != nil {
+			continue
+		}
+		entryPath = normalizeStoragePath(entryPath)
+		if entryPath != targetPath {
 			continue
 		}
 
-		var size int64
-		if ps.Prop.GetContentLength != "" {
-			fmt.Sscanf(ps.Prop.GetContentLength, "%d", &size)
-		}
-
-		var modTime time.Time
-		// 尝试多种常见日期格式
-		modified := ps.Prop.GetLastModified
-		if modified != "" {
-			for _, format := range []string{
-				time.RFC1123,
-				time.RFC1123Z,
-				"Mon, 02 Jan 2006 15:04:05 MST",
-				time.RFC3339,
-			} {
-				if modTime, err = time.Parse(format, modified); err == nil {
-					break
-				}
-			}
-		}
-
-		// 通过 ResourceType.Collection 是否有值来判断是否为目录
-		isDir := ps.Prop.ResourceType.Collection != nil
-
 		return &webdavFileInfo{
-			name:    path.Base(p),
-			size:    size,
+			name:    path.Base(targetPath),
+			size:    e.Size,
 			mode:    os.FileMode(0644),
-			modTime: modTime,
-			isDir:   isDir,
+			modTime: e.ModTime,
+			isDir:   e.IsDir,
 		}, nil
 	}
 
@@ -304,52 +417,117 @@ func (s *WebDAVStorage) ServeDirectURL(p, name, method string, opt *ServeDirectO
 
 // IterateObjects iterates across objects in WebDAV storage using PROPFIND
 func (s *WebDAVStorage) IterateObjects(prefix string, fn func(string, Object) error) error {
-	if prefix == "" {
-		prefix = "."
+	prefix = normalizeStoragePath(prefix)
+
+	visited := map[string]struct{}{}
+	queue := []string{prefix}
+
+	for len(queue) > 0 {
+		dir := queue[0]
+		queue = queue[1:]
+
+		if _, ok := visited[dir]; ok {
+			continue
+		}
+		visited[dir] = struct{}{}
+
+		reqPath := ""
+		if dir != "" {
+			reqPath = dir + "/"
+		}
+
+		entries, err := s.propfind(reqPath, "1")
+		if err != nil {
+			return err
+		}
+
+		for _, e := range entries {
+			entryPath, err := s.hrefToStoragePath(e.HRef, reqPath)
+			if err != nil {
+				continue
+			}
+
+			entryPath = strings.TrimPrefix(entryPath, "/")
+			if entryPath == "" {
+				continue
+			}
+
+			entryDir := strings.TrimSuffix(entryPath, "/")
+			if entryDir == dir {
+				continue // skip the directory itself
+			}
+
+			if e.IsDir {
+				queue = append(queue, entryDir)
+				continue
+			}
+
+			obj := newWebDAVObject(s, entryPath)
+			obj.size = e.Size
+			obj.modTime = e.ModTime
+			obj.isDir = false
+
+			if err := fn(entryPath, obj); err != nil {
+				_ = obj.Close()
+				return err
+			}
+			_ = obj.Close()
+		}
 	}
 
-	// 使用 PROPFIND Depth:1 获取目录中的所有文件
-	depth := "1"
-	if prefix != "." {
-		depth = "1"
-	}
+	return nil
+}
 
-	fullPath := s.getFullPath(prefix)
-	req, err := http.NewRequestWithContext(s.ctx, "PROPFIND", fullPath, nil)
+type webdavPropfindEntry struct {
+	HRef    string
+	Size    int64
+	ModTime time.Time
+	IsDir   bool
+}
+
+func (s *WebDAVStorage) propfind(p, depth string) ([]webdavPropfindEntry, error) {
+	req, err := http.NewRequestWithContext(s.ctx, "PROPFIND", s.getFullPath(p), nil)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	req.Header.Set("Depth", depth)
-
+	req.Header.Set("Content-Type", "text/xml")
 	if s.config.Username != "" {
 		req.SetBasicAuth(s.config.Username, s.config.Password)
 	}
 
 	resp, err := s.client.Do(req)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	defer resp.Body.Close()
 
+	if resp.StatusCode == http.StatusNotFound {
+		return nil, os.ErrNotExist
+	}
 	if resp.StatusCode != http.StatusMultiStatus {
-		return fmt.Errorf("PROPFIND failed: %s", resp.Status)
+		return nil, fmt.Errorf("PROPFIND failed: %s", resp.Status)
 	}
 
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {
-		return err
+		return nil, err
 	}
 
-	// 解析多状态响应
+	return parseWebDAVMultiStatus(body)
+}
+
+func parseWebDAVMultiStatus(body []byte) ([]webdavPropfindEntry, error) {
 	var multiResp struct {
 		Responses []struct {
 			HRef     string `xml:"href"`
 			PropStat []struct {
 				Status string `xml:"status"`
 				Prop   struct {
+					GetLastModified  string `xml:"getlastmodified"`
 					GetContentLength string `xml:"getcontentlength"`
 					ResourceType     struct {
-						Collection any `xml:"collection"`
+						Collection *struct{} `xml:"collection"`
 					} `xml:"resourcetype"`
 				} `xml:"propstat>prop"`
 			} `xml:"propstat"`
@@ -357,86 +535,131 @@ func (s *WebDAVStorage) IterateObjects(prefix string, fn func(string, Object) er
 	}
 
 	if err := xml.Unmarshal(body, &multiResp); err != nil {
-		return fmt.Errorf("failed to parse PROPFIND response: %w", err)
+		return nil, err
 	}
 
-	basePrefix := strings.TrimPrefix(prefix, "./")
-
+	ret := make([]webdavPropfindEntry, 0, len(multiResp.Responses))
 	for _, resp := range multiResp.Responses {
-		// 找到成功的 propstat
-		var isDir bool
-		var size int64
 		for _, ps := range resp.PropStat {
-			if ps.Status == "HTTP/1.1 200 OK" || ps.Status == "200 OK" {
-				isDir = ps.Prop.ResourceType.Collection != nil
-				if ps.Prop.GetContentLength != "" {
-					fmt.Sscanf(ps.Prop.GetContentLength, "%d", &size)
-				}
-				break
+			if !isPropStatStatusOK(ps.Status) {
+				continue
 			}
-		}
 
-		// 跳过目录和自身
-		if isDir {
-			continue
-		}
+			var size int64
+			if ps.Prop.GetContentLength != "" {
+				if v, err := strconv.ParseInt(strings.TrimSpace(ps.Prop.GetContentLength), 10, 64); err == nil {
+					size = v
+				}
+			}
 
-		// 提取相对路径
-		objPath := resp.HRef
-		// 移除 baseURL 前缀
-		if strings.HasPrefix(objPath, s.config.URL) {
-			objPath = strings.TrimPrefix(objPath, s.config.URL)
-		}
-		objPath = strings.TrimPrefix(objPath, "/")
-		objPath = strings.TrimPrefix(objPath, basePrefix)
-		objPath = strings.TrimPrefix(objPath, "/")
+			var modTime time.Time
+			if t, ok := parseWebDAVModTime(ps.Prop.GetLastModified); ok {
+				modTime = t
+			}
 
-		if objPath == "" {
-			continue
-		}
-
-		obj := &webdavObjectSimple{
-			storage: s,
-			path:    objPath,
-			size:    size,
-		}
-
-		if err := fn(objPath, obj); err != nil {
-			return err
+			ret = append(ret, webdavPropfindEntry{
+				HRef:    resp.HRef,
+				Size:    size,
+				ModTime: modTime,
+				IsDir:   ps.Prop.ResourceType.Collection != nil,
+			})
+			break
 		}
 	}
 
-	return nil
+	return ret, nil
 }
 
-// webdavObjectSimple 是一个轻量级的 Object 实现，用于 IterateObjects
-type webdavObjectSimple struct {
-	storage *WebDAVStorage
-	path    string
-	size    int64
+func isPropStatStatusOK(status string) bool {
+	// Example values:
+	// * "HTTP/1.1 200 OK"
+	// * "200 OK"
+	fields := strings.Fields(status)
+	for _, f := range fields {
+		if code, err := strconv.Atoi(f); err == nil {
+			return code == http.StatusOK
+		}
+	}
+	return false
 }
 
-func (w *webdavObjectSimple) Read(p []byte) (int, error) {
-	// 需要先 Open
-	return 0, fmt.Errorf("must call Open first")
+func parseWebDAVModTime(modified string) (time.Time, bool) {
+	modified = strings.TrimSpace(modified)
+	if modified == "" {
+		return time.Time{}, false
+	}
+	for _, format := range []string{
+		http.TimeFormat,
+		time.RFC1123,
+		time.RFC1123Z,
+		"Mon, 02 Jan 2006 15:04:05 MST",
+		time.RFC3339,
+	} {
+		if t, err := time.Parse(format, modified); err == nil {
+			return t, true
+		}
+	}
+	return time.Time{}, false
 }
 
-func (w *webdavObjectSimple) Seek(offset int64, whence int) (int64, error) {
-	return 0, fmt.Errorf("must call Open first")
+func normalizeStoragePath(p string) string {
+	p = strings.TrimPrefix(p, "./")
+	p = strings.TrimPrefix(p, "/")
+	p = strings.TrimSuffix(p, "/")
+	return p
 }
 
-func (w *webdavObjectSimple) Close() error {
-	return nil
+func (s *WebDAVStorage) hrefToStoragePath(href, requestPrefix string) (string, error) {
+	u, err := url.Parse(href)
+	if err != nil {
+		return "", err
+	}
+
+	hrefPath := u.Path
+	if hrefPath == "" {
+		hrefPath = href
+	}
+	if decoded, err := url.PathUnescape(hrefPath); err == nil {
+		hrefPath = decoded
+	}
+
+	if strings.HasPrefix(hrefPath, s.basePath) {
+		return strings.TrimPrefix(hrefPath, s.basePath), nil
+	}
+	if baseNoSlash := strings.TrimSuffix(s.basePath, "/"); baseNoSlash != "" && strings.HasPrefix(hrefPath, baseNoSlash) {
+		hrefPath = strings.TrimPrefix(hrefPath, baseNoSlash)
+		hrefPath = strings.TrimPrefix(hrefPath, "/")
+		return hrefPath, nil
+	}
+
+	// Some WebDAV servers return relative HREFs for PROPFIND.
+	hrefPath = strings.TrimPrefix(hrefPath, "/")
+	hrefPath = strings.TrimPrefix(hrefPath, "./")
+	reqPrefix := normalizeStoragePath(requestPrefix)
+	if reqPrefix != "" {
+		if hrefPath == reqPrefix || strings.HasPrefix(hrefPath, reqPrefix+"/") {
+			return hrefPath, nil
+		}
+		return path.Join(reqPrefix, hrefPath), nil
+	}
+	return hrefPath, nil
 }
 
-func (w *webdavObjectSimple) Stat() (os.FileInfo, error) {
-	return &webdavFileInfo{
-		name:    path.Base(w.path),
-		size:    w.size,
-		mode:    os.FileMode(0644),
-		modTime: time.Now(),
-		isDir:   false,
-	}, nil
+func parseContentRangeTotal(contentRange string) (int64, bool) {
+	// Examples:
+	// * "bytes 0-1023/146515"
+	// * "bytes 1024-2047/146515"
+	// * "bytes */146515"
+	parts := strings.Split(contentRange, "/")
+	if len(parts) != 2 {
+		return 0, false
+	}
+	totalStr := strings.TrimSpace(parts[1])
+	if totalStr == "" || totalStr == "*" {
+		return 0, false
+	}
+	total, err := strconv.ParseInt(totalStr, 10, 64)
+	return total, err == nil
 }
 
 // webdavFileInfo implements os.FileInfo for WebDAV responses

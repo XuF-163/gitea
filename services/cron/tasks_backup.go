@@ -9,8 +9,8 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
-	"time"
 
 	"code.gitea.io/gitea/models/db"
 	user_model "code.gitea.io/gitea/models/user"
@@ -262,7 +262,7 @@ func rotateBackups(retention int, currentFileName string) error {
 	var files []string
 
 	iterErr := storage.Backup.IterateObjects("", func(path string, obj storage.Object) error {
-		if strings.HasPrefix(path, "gitea-backup-") {
+		if strings.HasPrefix(filepath.Base(path), "gitea-backup-") {
 			files = append(files, path)
 		}
 		return nil
@@ -272,32 +272,41 @@ func rotateBackups(retention int, currentFileName string) error {
 		return fmt.Errorf("failed to iterate backup files: %w", iterErr)
 	}
 
-	if len(files) <= retention {
+	if len(files) == 0 || len(files) <= retention {
 		return nil
 	}
 
 	// 收集文件及其修改时间，按时间倒序
 	type fileWithTime struct {
-		path    string
-		modTime time.Time
+		path string
+		ts   int64
 	}
 	var fileInfos []fileWithTime
 	for _, f := range files {
-		info, err := storage.Backup.Stat(f)
-		if err != nil {
-			continue
+		fileName := filepath.Base(f)
+		ts, ok := parseBackupTimestamp(fileName)
+		if !ok {
+			info, err := storage.Backup.Stat(f)
+			if err != nil {
+				continue
+			}
+			ts = info.ModTime().Unix()
 		}
-		fileInfos = append(fileInfos, fileWithTime{path: f, modTime: info.ModTime()})
+		fileInfos = append(fileInfos, fileWithTime{path: f, ts: ts})
+	}
+
+	if len(fileInfos) <= retention {
+		return nil
 	}
 
 	sort.Slice(fileInfos, func(i, j int) bool {
-		return fileInfos[i].modTime.After(fileInfos[j].modTime)
+		return fileInfos[i].ts > fileInfos[j].ts
 	})
 
 	// 删除超出保留数量的旧备份（跳过当前刚上传的文件）
 	deleted := 0
 	for i := retention; i < len(fileInfos); i++ {
-		if fileInfos[i].path == currentFileName {
+		if filepath.Base(fileInfos[i].path) == currentFileName {
 			continue
 		}
 		if err := storage.Backup.Delete(fileInfos[i].path); err != nil {
@@ -313,4 +322,14 @@ func rotateBackups(retention int, currentFileName string) error {
 	}
 
 	return nil
+}
+
+func parseBackupTimestamp(fileName string) (int64, bool) {
+	rest := strings.TrimPrefix(fileName, "gitea-backup-")
+	tsStr, _, hasDot := strings.Cut(rest, ".")
+	if !hasDot || tsStr == "" {
+		return 0, false
+	}
+	ts, err := strconv.ParseInt(tsStr, 10, 64)
+	return ts, err == nil
 }

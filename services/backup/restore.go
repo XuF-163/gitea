@@ -12,6 +12,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -43,10 +44,14 @@ func GetLatestBackupInfo(ctx context.Context, backupStorage storage.ObjectStorag
 		if err != nil {
 			return nil
 		}
+		modTime := info.ModTime()
+		if ts, ok := parseBackupTimestamp(fileName); ok {
+			modTime = time.Unix(ts, 0)
+		}
 		backups = append(backups, BackupInfo{
 			FileName: path,
 			Size:     info.Size(),
-			ModTime:  info.ModTime(),
+			ModTime:  modTime,
 		})
 		return nil
 	})
@@ -64,6 +69,16 @@ func GetLatestBackupInfo(ctx context.Context, backupStorage storage.ObjectStorag
 	})
 
 	return &backups[0], nil
+}
+
+func parseBackupTimestamp(fileName string) (int64, bool) {
+	rest := strings.TrimPrefix(fileName, "gitea-backup-")
+	tsStr, _, hasDot := strings.Cut(rest, ".")
+	if !hasDot || tsStr == "" {
+		return 0, false
+	}
+	ts, err := strconv.ParseInt(tsStr, 10, 64)
+	return ts, err == nil
 }
 
 // RestoreFromBackup 从备份存储恢复数据
@@ -437,4 +452,3 @@ func executeSQLDump(ctx context.Context, dumpPath string) error {
 	log.Info("All %d SQL statements executed successfully", len(statements))
 	return nil
 }
-
