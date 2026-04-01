@@ -6,10 +6,10 @@
 	<form class="ui form ignore-dirty system-config-form" method="post" action="{{AppSubUrl}}/-/admin/config">
 		{{$cfgOpt := $.SystemConfig.Backup.StorageConfig}}
 		{{$cfgKey := $cfgOpt.DynKey}}
-		{{$storageConfig := $cfgOpt.Value ctx}}
+		{{$storageConfig := .BackupInitialStorageConfig}}
 		<input type="hidden" data-config-dyn-key="{{$cfgKey}}" data-config-value-json="{{JsonUtils.EncodeToString $storageConfig}}">
 
-		{{/* 存储类型选择 */}}
+		{{/* 存储类型 */}}
 		<div class="field">
 			<label>{{ctx.Locale.Tr "admin.config.backup_storage_type"}}</label>
 			<select name="{{$cfgKey}}.StorageType" id="backup-storage-type">
@@ -19,13 +19,13 @@
 			</select>
 		</div>
 
-		{{/* 本地路径 - 仅 storage type = local 时显示 */}}
+		{{/* 本地路径 */}}
 		<div class="field backup-setting-for-local" {{if ne $storageConfig.StorageType "local"}}hidden{{end}}>
 			<label>{{ctx.Locale.Tr "admin.config.backup_local_path"}}</label>
 			<input type="text" name="{{$cfgKey}}.LocalPath" value="{{$storageConfig.LocalPath}}" placeholder="/data/gitea/backups">
 		</div>
 
-		{{/* WebDAV 配置 - 仅 storage type = webdav 时显示 */}}
+		{{/* WebDAV */}}
 		<div class="backup-setting-for-webdav" {{if ne $storageConfig.StorageType "webdav"}}hidden{{end}}>
 			<div class="field">
 				<label>{{ctx.Locale.Tr "admin.config.backup_webdav_url"}}</label>
@@ -46,7 +46,7 @@
 		{{/* 备份格式 */}}
 		{{$cfgOpt = $.SystemConfig.Backup.Format}}
 		{{$cfgKey = $cfgOpt.DynKey}}
-		{{$format := $cfgOpt.Value ctx}}
+		{{$format := .BackupInitialFormat}}
 		<input type="hidden" data-config-dyn-key="{{$cfgKey}}" data-config-value-json="{{JsonUtils.EncodeToString $format}}">
 		<div class="field">
 			<label>{{ctx.Locale.Tr "admin.config.backup_format"}}</label>
@@ -57,48 +57,47 @@
 			</select>
 		</div>
 
-		{{/* 跳过选项 */}}
 		<div class="divider"></div>
 
+		{{/* 跳过选项 */}}
 		{{$cfgOpt = $.SystemConfig.Backup.SkipLFS}}
 		{{$cfgKey = $cfgOpt.DynKey}}
-		<div class="field">
-			<div class="ui checkbox">
-				<input type="checkbox" data-config-dyn-key="{{$cfgKey}}" data-config-value-type="boolean" {{if $cfgOpt.Value ctx}}checked{{end}}>
-				<label>{{ctx.Locale.Tr "admin.config.backup_skip_lfs"}}</label>
+		<dt>{{ctx.Locale.Tr "admin.config.backup_skip_lfs"}}</dt>
+		<dd>
+			<div class="ui toggle checkbox">
+				<input type="checkbox" data-config-dyn-key="{{$cfgKey}}" data-config-value-type="boolean" {{if $cfgOpt.Value ctx}}checked{{end}}><label></label>
 			</div>
-		</div>
+		</dd>
 
 		{{$cfgOpt = $.SystemConfig.Backup.SkipAttach}}
 		{{$cfgKey = $cfgOpt.DynKey}}
-		<div class="field">
-			<div class="ui checkbox">
-				<input type="checkbox" data-config-dyn-key="{{$cfgKey}}" data-config-value-type="boolean" {{if $cfgOpt.Value ctx}}checked{{end}}>
-				<label>{{ctx.Locale.Tr "admin.config.backup_skip_attachments"}}</label>
+		<dt>{{ctx.Locale.Tr "admin.config.backup_skip_attachments"}}</dt>
+		<dd>
+			<div class="ui toggle checkbox">
+				<input type="checkbox" data-config-dyn-key="{{$cfgKey}}" data-config-value-type="boolean" {{if $cfgOpt.Value ctx}}checked{{end}}><label></label>
 			</div>
-		</div>
+		</dd>
 
 		{{$cfgOpt = $.SystemConfig.Backup.SkipPackages}}
 		{{$cfgKey = $cfgOpt.DynKey}}
-		<div class="field">
-			<div class="ui checkbox">
-				<input type="checkbox" data-config-dyn-key="{{$cfgKey}}" data-config-value-type="boolean" {{if $cfgOpt.Value ctx}}checked{{end}}>
-				<label>{{ctx.Locale.Tr "admin.config.backup_skip_packages"}}</label>
+		<dt>{{ctx.Locale.Tr "admin.config.backup_skip_packages"}}</dt>
+		<dd>
+			<div class="ui toggle checkbox">
+				<input type="checkbox" data-config-dyn-key="{{$cfgKey}}" data-config-value-type="boolean" {{if $cfgOpt.Value ctx}}checked{{end}}><label></label>
 			</div>
-		</div>
+		</dd>
 
 		{{$cfgOpt = $.SystemConfig.Backup.SkipDB}}
 		{{$cfgKey = $cfgOpt.DynKey}}
-		<div class="field">
-			<div class="ui checkbox">
-				<input type="checkbox" data-config-dyn-key="{{$cfgKey}}" data-config-value-type="boolean" {{if $cfgOpt.Value ctx}}checked{{end}}>
-				<label>{{ctx.Locale.Tr "admin.config.backup_skip_db"}}</label>
+		<dt>{{ctx.Locale.Tr "admin.config.backup_skip_db"}}</dt>
+		<dd>
+			<div class="ui toggle checkbox">
+				<input type="checkbox" data-config-dyn-key="{{$cfgKey}}" data-config-value-type="boolean" {{if $cfgOpt.Value ctx}}checked{{end}}><label></label>
 			</div>
-		</div>
+		</dd>
 
 		<div class="divider"></div>
 
-		{{/* 测试连接 + 保存 */}}
 		<div class="field">
 			<button type="button" class="ui button" id="test-backup-storage-btn">{{ctx.Locale.Tr "admin.config.backup_test_connection"}}</button>
 			<button class="ui primary button">{{ctx.Locale.Tr "save"}}</button>

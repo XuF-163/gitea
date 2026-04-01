@@ -192,6 +192,20 @@ func ConfigSettings(ctx *context.Context) {
 	ctx.Data["PageIsAdminConfig"] = true
 	ctx.Data["PageIsAdminConfigSettings"] = true
 	ctx.Data["Backup"] = setting.Backup
+
+	// 从 app.ini 构建备份存储的初始配置，供模板 data-config-value-json 使用
+	// 动态配置系统只支持单 key 回退，但备份存储配置散布在多个 key 中
+	backupInitialConfig := setting.BackupConfigType{}
+	if setting.Backup.WebDAVStorage != nil {
+		backupInitialConfig.StorageType = string(setting.Backup.WebDAVStorage.Type)
+		backupInitialConfig.LocalPath = setting.Backup.WebDAVStorage.Path
+		backupInitialConfig.WebDAVURL = setting.Backup.WebDAVStorage.WebDAVConfig.URL
+		backupInitialConfig.WebDAVUsername = setting.Backup.WebDAVStorage.WebDAVConfig.Username
+		backupInitialConfig.WebDAVPassword = setting.Backup.WebDAVStorage.WebDAVConfig.Password
+	}
+	ctx.Data["BackupInitialStorageConfig"] = backupInitialConfig
+	ctx.Data["BackupInitialFormat"] = setting.Backup.Format
+
 	ctx.HTML(http.StatusOK, tplConfigSettings)
 }
 
