@@ -6,6 +6,7 @@ package backup
 import (
 	"bufio"
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"io/fs"
@@ -167,7 +168,9 @@ func RestoreFromBackup(ctx context.Context, backupStorage storage.ObjectStorage,
 	// 恢复数据库 SQL dump
 	UpdateRestoreProgress("restoring database", 90)
 	if err := restoreDatabaseFromArchive(ctx, archiveFS); err != nil {
+		SetRestoreFailed(fmt.Sprintf("failed to restore database: %v", err))
 		log.Error("Failed to restore database: %v", err)
+		return err
 	}
 
 	UpdateRestoreProgress("restore completed", 100)
@@ -341,8 +344,10 @@ func restoreDatabaseFromArchive(ctx context.Context, archiveFS fs.FS) error {
 	// 尝试打开 gitea-db.sql
 	src, err := archiveFS.Open("gitea-db.sql")
 	if err != nil {
-		log.Info("No database dump found in backup")
-		return nil
+		if errors.Is(err, fs.ErrNotExist) {
+			return fmt.Errorf("database dump gitea-db.sql not found in backup")
+		}
+		return fmt.Errorf("failed to open database dump gitea-db.sql: %w", err)
 	}
 	defer src.Close()
 
@@ -363,7 +368,7 @@ func restoreDatabaseFromArchive(ctx context.Context, archiveFS fs.FS) error {
 	if err := executeSQLDump(ctx, destPath); err != nil {
 		log.Error("Failed to execute database dump from %s: %v", destPath, err)
 		log.Warn("SQL dump file is kept at %s for manual restore", destPath)
-		return nil // 不阻塞整个恢复流程
+		return fmt.Errorf("failed to execute database dump: %w", err)
 	}
 
 	// 执行成功后删除临时文件

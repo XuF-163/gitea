@@ -159,20 +159,18 @@ func runBackupTask(ctx context.Context, cfg *BackupConfig) error {
 		}
 	}
 
-	// Add database dump
-	if !setting.Backup.SkipDB {
-		log.Info("Adding database to backup")
-		dbFile := filepath.Join(tmpDir, "gitea-db.sql")
-		if err := db.DumpDatabase(dbFile, ""); err != nil {
-			return fmt.Errorf("failed to dump database: %w", err)
-		}
-
-		if err := dumper.AddFileByPath("gitea-db.sql", dbFile); err != nil {
-			os.Remove(dbFile)
-			return fmt.Errorf("failed to add db dump: %w", err)
-		}
-		os.Remove(dbFile) // db dump 已归档，删除临时文件
+	// Add database dump (always included)
+	log.Info("Adding database to backup")
+	dbFile := filepath.Join(tmpDir, "gitea-db.sql")
+	if err := db.DumpDatabase(dbFile, ""); err != nil {
+		return fmt.Errorf("failed to dump database: %w", err)
 	}
+
+	if err := dumper.AddFileByPath("gitea-db.sql", dbFile); err != nil {
+		os.Remove(dbFile)
+		return fmt.Errorf("failed to add db dump: %w", err)
+	}
+	os.Remove(dbFile) // db dump 已归档，删除临时文件
 
 	// 添加配置文件 app.ini
 	log.Info("Adding configuration file from %s", setting.CustomConf)

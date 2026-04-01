@@ -89,7 +89,6 @@ func initDefaultConfig() {
 			SkipLFS:       config.NewOption[bool]("backup.skip_lfs").WithFileConfig(config.CfgSecKey{Sec: "backup", Key: "SKIP_LFS"}),
 			SkipAttach:    config.NewOption[bool]("backup.skip_attachments").WithFileConfig(config.CfgSecKey{Sec: "backup", Key: "SKIP_ATTACHMENTS"}),
 			SkipPackages:  config.NewOption[bool]("backup.skip_packages").WithFileConfig(config.CfgSecKey{Sec: "backup", Key: "SKIP_PACKAGES"}),
-			SkipDB:        config.NewOption[bool]("backup.skip_db").WithFileConfig(config.CfgSecKey{Sec: "backup", Key: "SKIP_DB"}),
 		},
 	}
 }

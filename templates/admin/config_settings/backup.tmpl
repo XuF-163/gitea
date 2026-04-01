@@ -97,15 +97,6 @@
 			</div>
 		</dd>
 
-		{{$cfgOpt = $.SystemConfig.Backup.SkipDB}}
-		{{$cfgKey = $cfgOpt.DynKey}}
-		<dt>{{ctx.Locale.Tr "admin.config.backup_skip_db"}}</dt>
-		<dd>
-			<div class="ui toggle checkbox">
-				<input type="checkbox" name="{{$cfgKey}}" data-config-dyn-key="{{$cfgKey}}" data-config-value-type="boolean" {{if $cfgOpt.Value ctx}}checked{{end}}><label></label>
-			</div>
-		</dd>
-
 		<div class="divider"></div>
 
 		<div class="field">
