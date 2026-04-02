@@ -104,7 +104,7 @@ func getIssueIndexerData(ctx context.Context, issueID int64) (*internal.IndexerD
 	return &internal.IndexerData{
 		ID:                 issue.ID,
 		RepoID:             issue.RepoID,
-		IsPublic:           !issue.Repo.IsPrivate && issue.Repo.Owner.Visibility.IsPublic(),
+		IsPublic:           !issue.Repo.IsPrivate && !issue.Repo.IsInternal && issue.Repo.Owner.Visibility.IsPublic(),
 		Title:              issue.Title,
 		Content:            issue.Content,
 		Comments:           comments,

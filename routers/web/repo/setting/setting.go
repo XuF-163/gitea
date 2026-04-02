@@ -1005,19 +1005,67 @@ func handleSettingsPostVisibility(ctx *context.Context) {
 		return
 	}
 
-	private := ctx.FormOptionalBool("private").ValueOrDefault(true) // default to true for privacy & safety
+	visibility := strings.ToLower(ctx.FormString("visibility"))
+	if visibility == "" {
+		// Backward compatibility: `private` is the legacy (toggle) parameter.
+		private := ctx.FormOptionalBool("private").ValueOrDefault(true) // default to true for privacy & safety
+		if private {
+			visibility = "private"
+		} else {
+			visibility = "public"
+		}
+	}
 
-	// when ForcePrivate enabled, you could change public repo to private, but only admin users can change private to public
-	if !private && setting.Repository.ForcePrivate && !ctx.Doer.IsAdmin {
+	var desiredPrivate, desiredInternal bool
+	switch visibility {
+	case "public":
+	case "internal":
+		desiredInternal = true
+	case "private":
+		desiredPrivate = true
+	default:
+		ctx.JSONError("invalid visibility")
+		return
+	}
+
+	desiredInternalMinUserLevel := 0
+	if desiredInternal && !desiredPrivate {
+		desiredInternalMinUserLevel = ctx.FormInt("internal_min_user_level")
+		if desiredInternalMinUserLevel < 0 {
+			desiredInternalMinUserLevel = 0
+		}
+		if desiredInternalMinUserLevel > 4 {
+			desiredInternalMinUserLevel = 4
+		}
+	}
+
+	visibilityChanged := repo.IsPrivate != desiredPrivate || repo.IsInternal != desiredInternal || repo.InternalMinUserLevel != desiredInternalMinUserLevel
+	if !visibilityChanged {
+		ctx.Flash.Success(ctx.Tr("repo.settings.visibility.success"))
+		ctx.JSONRedirect(ctx.Repo.RepoLink + "/settings")
+		return
+	}
+
+	// when ForcePrivate enabled, you could change public repo to private, but only admin users can change private to public/internal
+	if repo.IsPrivate && !desiredPrivate && setting.Repository.ForcePrivate && !ctx.Doer.IsAdmin {
 		ctx.JSONError(ctx.Tr("form.repository_force_private"))
 		return
 	}
-	if private && repo.FullName() != ctx.FormString("confirm_repo_name") {
+	// Require confirmation only when changing a non-private repo to private.
+	if !repo.IsPrivate && desiredPrivate && repo.FullName() != ctx.FormString("confirm_repo_name") {
 		ctx.JSONError(ctx.Tr("form.enterred_invalid_repo_name"))
 		return
 	}
 
-	err := repo_service.MakeRepoPrivate(ctx, repo, private)
+	var err error
+	if desiredPrivate {
+		err = repo_service.MakeRepoPrivate(ctx, repo, true)
+	} else {
+		repo.IsPrivate = false
+		repo.IsInternal = desiredInternal
+		repo.InternalMinUserLevel = desiredInternalMinUserLevel
+		err = repo_service.UpdateRepository(ctx, repo, true)
+	}
 	if err != nil {
 		log.Error("Tried to change the visibility of the repo: %s", err)
 		ctx.JSONError(ctx.Tr("repo.settings.visibility.error"))

@@ -45,6 +45,12 @@ type CreateRepoOptions struct {
 	Readme           string
 	DefaultBranch    string
 	IsPrivate        bool
+	// IsInternal marks the repository as visible to signed-in users only (not anonymous users).
+	// It is ignored if IsPrivate is true.
+	IsInternal       bool
+	// InternalMinUserLevel is the minimum user level required to view the repository when it is internal.
+	// It is ignored if IsInternal is false or IsPrivate is true.
+	InternalMinUserLevel int
 	IsMirror         bool
 	IsTemplate       bool
 	AutoInit         bool
@@ -234,6 +240,11 @@ func CreateRepositoryDirectly(ctx context.Context, doer, owner *user_model.User,
 		return nil, fmt.Errorf("unsupported object format: %s", opts.ObjectFormatName)
 	}
 
+	internalMinUserLevel := 0
+	if opts.IsInternal && !opts.IsPrivate {
+		internalMinUserLevel = opts.InternalMinUserLevel
+	}
+
 	repo := &repo_model.Repository{
 		OwnerID:                         owner.ID,
 		Owner:                           owner,
@@ -244,6 +255,8 @@ func CreateRepositoryDirectly(ctx context.Context, doer, owner *user_model.User,
 		OriginalURL:                     opts.OriginalURL,
 		OriginalServiceType:             opts.GitServiceType,
 		IsPrivate:                       opts.IsPrivate,
+		IsInternal:                      opts.IsInternal && !opts.IsPrivate,
+		InternalMinUserLevel:            internalMinUserLevel,
 		IsFsckEnabled:                   !opts.IsMirror,
 		IsTemplate:                      opts.IsTemplate,
 		CloseIssuesViaCommitInAnyBranch: setting.Repository.DefaultCloseIssuesViaCommitsInAnyBranch,

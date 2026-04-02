@@ -1085,6 +1085,8 @@
   "repo.desc.public_access": "Public Access",
   "repo.desc.template": "Template",
   "repo.desc.internal": "Internal",
+  "repo.visibility_min_user_level": "Internal minimum user level",
+  "repo.visibility_min_user_level_helper": "When the repository is internal, only signed-in users whose level is greater than or equal to this value can view it.",
   "repo.desc.archived": "Archived",
   "repo.desc.sha256": "SHA256",
   "repo.template.items": "Template Items",

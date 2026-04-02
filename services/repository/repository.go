@@ -125,7 +125,17 @@ func UpdateRepository(ctx context.Context, repo *repo_model.Repository, visibili
 func MakeRepoPrivate(ctx context.Context, repo *repo_model.Repository, private bool) (err error) {
 	return db.WithTx(ctx, func(ctx context.Context) error {
 		repo.IsPrivate = private
-		if err := repo_model.UpdateRepositoryColsNoAutoTime(ctx, repo, "is_private"); err != nil {
+		cols := []string{"is_private"}
+		if private && repo.IsInternal {
+			// A private repository is never "internal" (internal is a non-private visibility level).
+			repo.IsInternal = false
+			cols = append(cols, "is_internal")
+		}
+		if private && repo.InternalMinUserLevel != 0 {
+			repo.InternalMinUserLevel = 0
+			cols = append(cols, "internal_min_user_level")
+		}
+		if err := repo_model.UpdateRepositoryColsNoAutoTime(ctx, repo, cols...); err != nil {
 			return err
 		}
 
@@ -220,7 +230,7 @@ func CheckDaemonExportOK(ctx context.Context, repo *repo_model.Repository) error
 		return err
 	}
 
-	isPublic := !repo.IsPrivate && repo.Owner.Visibility == structs.VisibleTypePublic
+	isPublic := !repo.IsPrivate && !repo.IsInternal && repo.Owner.Visibility == structs.VisibleTypePublic
 	if !isPublic && isExist {
 		if err = gitrepo.RemoveRepoFileOrDir(ctx, repo, daemonExportFile); err != nil {
 			log.Error("Failed to remove %s: %v", daemonExportFile, err)
@@ -239,6 +249,26 @@ func CheckDaemonExportOK(ctx context.Context, repo *repo_model.Repository) error
 // updateRepository updates a repository with db context
 func updateRepository(ctx context.Context, repo *repo_model.Repository, visibilityChanged bool) (err error) {
 	repo.LowerName = strings.ToLower(repo.Name)
+
+	// Keep the internal visibility fields consistent:
+	// - a private repository is never internal
+	// - internal_min_user_level is only meaningful for internal (non-private) repositories
+	if repo.IsPrivate {
+		if repo.IsInternal {
+			repo.IsInternal = false
+			visibilityChanged = true
+		}
+		repo.InternalMinUserLevel = 0
+	} else if !repo.IsInternal {
+		repo.InternalMinUserLevel = 0
+	} else {
+		// LinuxDo trust levels are in range [0,4], keep the stored value in the same range.
+		if repo.InternalMinUserLevel < 0 {
+			repo.InternalMinUserLevel = 0
+		} else if repo.InternalMinUserLevel > 4 {
+			repo.InternalMinUserLevel = 4
+		}
+	}
 
 	e := db.GetEngine(ctx)
 
@@ -286,6 +316,12 @@ func updateRepository(ctx context.Context, repo *repo_model.Repository, visibili
 		}
 		for i := range forkRepos {
 			forkRepos[i].IsPrivate = repo.IsPrivate || repo.Owner.Visibility == structs.VisibleTypePrivate
+			forkRepos[i].IsInternal = !forkRepos[i].IsPrivate && repo.IsInternal
+			if forkRepos[i].IsInternal {
+				forkRepos[i].InternalMinUserLevel = repo.InternalMinUserLevel
+			} else {
+				forkRepos[i].InternalMinUserLevel = 0
+			}
 			if err = updateRepository(ctx, forkRepos[i], true); err != nil {
 				return fmt.Errorf("updateRepository[%d]: %w", forkRepos[i].ID, err)
 			}

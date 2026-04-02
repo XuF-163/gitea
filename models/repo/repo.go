@@ -185,6 +185,12 @@ type Repository struct {
 	NumOpenActionRuns   int `xorm:"-"`
 
 	IsPrivate  bool `xorm:"INDEX"`
+	// IsInternal marks a repository as visible to signed-in users only (it is not visible to anonymous users).
+	// It is mutually exclusive with IsPrivate (private repositories are always non-internal).
+	IsInternal bool `xorm:"INDEX NOT NULL DEFAULT false"`
+	// InternalMinUserLevel is the minimum user level required to view an internal repository.
+	// It is ignored if IsInternal is false or IsPrivate is true.
+	InternalMinUserLevel int `xorm:"INDEX NOT NULL DEFAULT 0"`
 	IsEmpty    bool `xorm:"INDEX"`
 	IsArchived bool `xorm:"INDEX"`
 	IsMirror   bool `xorm:"INDEX"`

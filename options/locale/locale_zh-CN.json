@@ -1082,6 +1082,8 @@
   "repo.desc.public_access": "公开访问",
   "repo.desc.template": "模板",
   "repo.desc.internal": "内部",
+  "repo.visibility_min_user_level": "内部最低用户等级",
+  "repo.visibility_min_user_level_helper": "当仓库为内部可见时，仅用户等级大于等于该值的已登录用户可以查看。",
   "repo.desc.archived": "已存档",
   "repo.desc.sha256": "SHA256",
   "repo.template.items": "模板选项",

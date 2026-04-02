@@ -74,6 +74,11 @@ func GenerateRepository(ctx context.Context, doer, owner *user_model.User, templ
 		}
 	}
 
+	internalMinUserLevel := 0
+	if opts.Internal && !opts.Private {
+		internalMinUserLevel = opts.InternalMinUserLevel
+	}
+
 	generateRepo := &repo_model.Repository{
 		OwnerID:          owner.ID,
 		Owner:            owner,
@@ -83,6 +88,8 @@ func GenerateRepository(ctx context.Context, doer, owner *user_model.User, templ
 		Description:      opts.Description,
 		DefaultBranch:    opts.DefaultBranch,
 		IsPrivate:        opts.Private,
+		IsInternal:       opts.Internal && !opts.Private,
+		InternalMinUserLevel: internalMinUserLevel,
 		IsEmpty:          !opts.GitContent || templateRepo.IsEmpty,
 		IsFsckEnabled:    templateRepo.IsFsckEnabled,
 		TemplateID:       templateRepo.ID,

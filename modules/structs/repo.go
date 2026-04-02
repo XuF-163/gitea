@@ -112,6 +112,8 @@ type Repository struct {
 	DefaultAllowMaintainerEdit    bool             `json:"default_allow_maintainer_edit"`
 	AvatarURL                     string           `json:"avatar_url"`
 	Internal                      bool             `json:"internal"`
+	// InternalMinUserLevel is the minimum user level required to view the repository when it is internal.
+	InternalMinUserLevel          int              `json:"internal_min_user_level"`
 	MirrorInterval                string           `json:"mirror_interval"`
 	// ObjectFormatName of the underlying git repository
 	// enum: sha1,sha256
@@ -135,6 +137,12 @@ type CreateRepoOption struct {
 	Description string `json:"description" binding:"MaxSize(2048)"`
 	// Whether the repository is private
 	Private bool `json:"private"`
+	// Whether the repository is internal (visible to signed-in users only)
+	// It is ignored if `private` is true.
+	Internal bool `json:"internal"`
+	// InternalMinUserLevel is the minimum user level required to view the repository when it is internal.
+	// It is ignored if `internal` is false or `private` is true.
+	InternalMinUserLevel int `json:"internal_min_user_level" binding:"Range(0,4)"`
 	// Label-Set to use
 	IssueLabels string `json:"issue_labels" binding:"MaxSize(255)"`
 	// Whether the repository should be auto-initialized?
@@ -171,6 +179,12 @@ type EditRepoOption struct {
 	// Note: you will get a 422 error if the organization restricts changing repository visibility to organization
 	// owners and a non-owner tries to change the value of private.
 	Private *bool `json:"private,omitempty"`
+	// either `true` to make the repository internal (visible to signed-in users only) or `false` to make it public.
+	// Note: ignored if the repository is private.
+	Internal *bool `json:"internal,omitempty"`
+	// change the minimum user level required to view the repository when it is internal.
+	// Note: ignored if the repository is private or not internal.
+	InternalMinUserLevel *int `json:"internal_min_user_level,omitempty"`
 	// either `true` to make this repository a template or `false` to make it a normal repository
 	Template *bool `json:"template,omitempty"`
 	// either `true` to enable code for this repository or `false` to disable it.
@@ -247,6 +261,12 @@ type GenerateRepoOption struct {
 	Description string `json:"description" binding:"MaxSize(2048)"`
 	// Whether the repository is private
 	Private bool `json:"private"`
+	// Whether the repository is internal (visible to signed-in users only)
+	// It is ignored if `private` is true.
+	Internal bool `json:"internal"`
+	// InternalMinUserLevel is the minimum user level required to view the repository when it is internal.
+	// It is ignored if `internal` is false or `private` is true.
+	InternalMinUserLevel int `json:"internal_min_user_level" binding:"Range(0,4)"`
 	// include git content of default branch in template repo
 	GitContent bool `json:"git_content"`
 	// include topics in template repo
@@ -388,6 +408,12 @@ type MigrateRepoOptions struct {
 	LFS            bool   `json:"lfs"`
 	LFSEndpoint    string `json:"lfs_endpoint"`
 	Private        bool   `json:"private"`
+	// Whether the repository is internal (visible to signed-in users only)
+	// It is ignored if `private` is true.
+	Internal       bool   `json:"internal"`
+	// InternalMinUserLevel is the minimum user level required to view the repository when it is internal.
+	// It is ignored if `internal` is false or `private` is true.
+	InternalMinUserLevel int `json:"internal_min_user_level" binding:"Range(0,4)"`
 	Description    string `json:"description" binding:"MaxSize(2048)"`
 	Wiki           bool   `json:"wiki"`
 	Milestones     bool   `json:"milestones"`

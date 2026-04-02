@@ -23,6 +23,12 @@ type CreateRepoForm struct {
 	UID           int64  `binding:"Required"`
 	RepoName      string `binding:"Required;AlphaDashDot;MaxSize(100)"`
 	Private       bool
+	// Visibility is the visibility level of the repository: public, internal, private.
+	// When set, it overrides the legacy `Private` field.
+	Visibility    string `binding:"OmitEmpty;In(public,internal,private)"`
+	// InternalMinUserLevel is the minimum user level required to view the repository when it is internal.
+	// It is ignored if Visibility is not `internal`.
+	InternalMinUserLevel int `binding:"Range(0,4)"`
 	Description   string `binding:"MaxSize(2048)"`
 	DefaultBranch string `binding:"GitRefName;MaxSize(100)"`
 	AutoInit      bool
@@ -68,6 +74,12 @@ type MigrateRepoForm struct {
 	LFS            bool   `json:"lfs"`
 	LFSEndpoint    string `json:"lfs_endpoint"`
 	Private        bool   `json:"private"`
+	// Visibility is the visibility level of the repository: public, internal, private.
+	// When set, it overrides the legacy `Private` field.
+	Visibility     string `json:"visibility"`
+	// InternalMinUserLevel is the minimum user level required to view the repository when it is internal.
+	// It is ignored if Visibility is not `internal`.
+	InternalMinUserLevel int `json:"internal_min_user_level"`
 	Description    string `json:"description" binding:"MaxSize(2048)"`
 	Wiki           bool   `json:"wiki"`
 	Milestones     bool   `json:"milestones"`

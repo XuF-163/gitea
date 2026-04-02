@@ -300,6 +300,12 @@ type GenerateRepoOptions struct {
 	DefaultBranch   string
 	Description     string
 	Private         bool
+	// Internal marks the repository as visible to signed-in users only (not anonymous users).
+	// It is ignored if Private is true.
+	Internal        bool
+	// InternalMinUserLevel is the minimum user level required to view the repository when it is internal.
+	// It is ignored if Internal is false or Private is true.
+	InternalMinUserLevel int
 	GitContent      bool
 	Topics          bool
 	GitHooks        bool

@@ -174,12 +174,19 @@ func Migrate(ctx *context.APIContext) {
 		opts.AWSSecretAccessKey = form.AWSSecretAccessKey
 	}
 
+	isPrivate := opts.Private || setting.Repository.ForcePrivate
+	internalMinUserLevel := 0
+	if form.Internal && !isPrivate {
+		internalMinUserLevel = form.InternalMinUserLevel
+	}
 	createdRepo, err := repo_service.CreateRepositoryDirectly(ctx, ctx.Doer, repoOwner, repo_service.CreateRepoOptions{
 		Name:           opts.RepoName,
 		Description:    opts.Description,
 		OriginalURL:    form.CloneAddr,
 		GitServiceType: gitServiceType,
-		IsPrivate:      opts.Private || setting.Repository.ForcePrivate,
+		IsPrivate:      isPrivate,
+		IsInternal:     form.Internal && !isPrivate,
+		InternalMinUserLevel: internalMinUserLevel,
 		IsMirror:       opts.Mirror,
 		Status:         repo_model.RepositoryBeingMigrated,
 	}, false)

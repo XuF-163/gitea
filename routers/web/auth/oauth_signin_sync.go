@@ -5,6 +5,7 @@ package auth
 
 import (
 	"fmt"
+	"strconv"
 
 	asymkey_model "code.gitea.io/gitea/models/asymkey"
 	"code.gitea.io/gitea/models/auth"
@@ -17,6 +18,29 @@ import (
 
 	"github.com/markbates/goth"
 )
+
+func parseOAuth2UserLevel(v any) (int, bool) {
+	switch v := v.(type) {
+	case int:
+		return v, true
+	case int32:
+		return int(v), true
+	case int64:
+		return int(v), true
+	case float32:
+		return int(v), true
+	case float64:
+		return int(v), true
+	case string:
+		i, err := strconv.Atoi(v)
+		if err != nil {
+			return 0, false
+		}
+		return i, true
+	default:
+		return 0, false
+	}
+}
 
 func oauth2SignInSync(ctx *context.Context, authSourceID int64, u *user_model.User, gothUser goth.User) {
 	oauth2UpdateAvatarIfNeed(ctx, gothUser.AvatarURL, u)
@@ -47,6 +71,17 @@ func oauth2SignInSync(ctx *context.Context, authSourceID int64, u *user_model.Us
 		u.FullName = fullName
 		if err := user_model.UpdateUserCols(ctx, u, "full_name"); err != nil {
 			log.Error("Unable to sync OAuth2 user full name %s: %v", gothUser.Provider, err)
+		}
+	}
+
+	// sync user level (e.g. LinuxDo trust level)
+	if v, ok := gothUser.RawData["trust_level"]; ok {
+		userLevel, ok := parseOAuth2UserLevel(v)
+		if ok && u.UserLevel != userLevel {
+			u.UserLevel = userLevel
+			if err := user_model.UpdateUserCols(ctx, u, "user_level"); err != nil {
+				log.Error("Unable to sync OAuth2 user level %s: %v", gothUser.Provider, err)
+			}
 		}
 	}
 

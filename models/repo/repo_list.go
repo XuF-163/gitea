@@ -219,12 +219,28 @@ func UserOwnedRepoCond(userID int64) builder.Cond {
 	}
 }
 
+func userVisibleInternalRepoCond(repoPrefix string, userID int64) builder.Cond {
+	userLevelSubQuery := builder.Select("user_level").From("`user`").Where(builder.Eq{
+		"id":            userID,
+		"is_restricted": false,
+	})
+
+	return builder.Or(
+		builder.Eq{repoPrefix + ".is_internal": false},
+		builder.And(
+			builder.Eq{repoPrefix + ".is_internal": true},
+			builder.Lte{repoPrefix + ".internal_min_user_level": userLevelSubQuery},
+		),
+	)
+}
+
 // UserAssignedRepoCond return user as assignee repositories list
 func UserAssignedRepoCond(id string, userID int64) builder.Cond {
 	return builder.And(
 		builder.Eq{
 			"repository.is_private": false,
 		},
+		userVisibleInternalRepoCond("repository", userID),
 		builder.In(id,
 			builder.Select("issue.repo_id").From("issue_assignees").
 				InnerJoin("issue", "issue.id = issue_assignees.issue_id").
@@ -241,6 +257,7 @@ func UserCreateIssueRepoCond(id string, userID int64, isPull bool) builder.Cond 
 		builder.Eq{
 			"repository.is_private": false,
 		},
+		userVisibleInternalRepoCond("repository", userID),
 		builder.In(id,
 			builder.Select("issue.repo_id").From("issue").
 				Where(builder.Eq{
@@ -257,6 +274,7 @@ func UserMentionedRepoCond(id string, userID int64) builder.Cond {
 		builder.Eq{
 			"repository.is_private": false,
 		},
+		userVisibleInternalRepoCond("repository", userID),
 		builder.In(id,
 			builder.Select("issue.repo_id").From("issue_user").
 				InnerJoin("issue", "issue.id = issue_user.issue_id").
@@ -327,6 +345,7 @@ func UserOrgUnitRepoCond(idStr string, userID, orgID int64, unitType unit.Type) 
 func userOrgPublicRepoCond(userID int64) builder.Cond {
 	return builder.And(
 		builder.Eq{"`repository`.is_private": false},
+		userVisibleInternalRepoCond("`repository`", userID),
 		builder.In("`repository`.owner_id",
 			builder.Select("`org_user`.org_id").
 				From("org_user").
@@ -339,6 +358,7 @@ func userOrgPublicRepoCond(userID int64) builder.Cond {
 func userOrgPublicRepoCondPrivate(userID int64) builder.Cond {
 	return builder.And(
 		builder.Eq{"`repository`.is_private": false},
+		userVisibleInternalRepoCond("`repository`", userID),
 		builder.In("`repository`.owner_id",
 			builder.Select("`org_user`.org_id").
 				From("org_user").
@@ -373,6 +393,7 @@ func SearchRepositoryCondition(opts SearchRepoOptions) builder.Cond {
 		// isn't in a private or limited organisation.
 		cond = cond.And(
 			builder.Eq{"is_private": false},
+			builder.Eq{"is_internal": false},
 			builder.NotIn("owner_id", builder.Select("id").From("`user`").Where(
 				builder.Or(builder.Eq{"visibility": structs.VisibleTypeLimited}, builder.Eq{"visibility": structs.VisibleTypePrivate}),
 			)))
@@ -642,15 +663,26 @@ func SearchRepositoryIDsByCondition(ctx context.Context, cond builder.Cond) ([]i
 		Find(&repoIDs)
 }
 
-func userAllPublicRepoCond(cond builder.Cond, orgVisibilityLimit []structs.VisibleType) builder.Cond {
-	return cond.Or(builder.And(
-		builder.Eq{"`repository`.is_private": false},
-		// Aren't in a private organisation or limited organisation if we're not logged in
-		builder.NotIn("`repository`.owner_id", builder.Select("id").From("`user`").Where(
+func userAllPublicRepoCond(cond builder.Cond, orgVisibilityLimit []structs.VisibleType, user *user_model.User) builder.Cond {
+	repoCond := builder.NewCond().And(builder.Eq{"`repository`.is_private": false})
+	if user == nil || user.ID <= 0 || user.IsRestricted {
+		repoCond = repoCond.And(builder.Eq{"`repository`.is_internal": false})
+	} else {
+		repoCond = repoCond.And(builder.Or(
+			builder.Eq{"`repository`.is_internal": false},
 			builder.And(
-				builder.Eq{"type": user_model.UserTypeOrganization},
-				builder.In("visibility", orgVisibilityLimit)),
-		))))
+				builder.Eq{"`repository`.is_internal": true},
+				builder.Lte{"`repository`.internal_min_user_level": user.UserLevel},
+			),
+		))
+	}
+	// Aren't in a private organisation or limited organisation if we're not logged in
+	repoCond = repoCond.And(builder.NotIn("`repository`.owner_id", builder.Select("id").From("`user`").Where(
+		builder.And(
+			builder.Eq{"type": user_model.UserTypeOrganization},
+			builder.In("visibility", orgVisibilityLimit)),
+	)))
+	return cond.Or(repoCond)
 }
 
 // AccessibleRepositoryCondition takes a user a returns a condition for checking if a repository is accessible
@@ -663,7 +695,7 @@ func AccessibleRepositoryCondition(user *user_model.User, unitType unit.Type) bu
 			orgVisibilityLimit = append(orgVisibilityLimit, structs.VisibleTypeLimited)
 		}
 		// 1. Be able to see all non-private repositories
-		cond = userAllPublicRepoCond(cond, orgVisibilityLimit)
+		cond = userAllPublicRepoCond(cond, orgVisibilityLimit, user)
 	}
 
 	if user != nil {
@@ -689,7 +721,7 @@ func AccessibleRepositoryCondition(user *user_model.User, unitType unit.Type) bu
 			cond = cond.Or(userOrgPublicRepoCond(user.ID))
 		} else if !setting.Service.RequireSignInViewStrict {
 			orgVisibilityLimit := []structs.VisibleType{structs.VisibleTypePrivate, structs.VisibleTypeLimited}
-			cond = userAllPublicRepoCond(cond, orgVisibilityLimit)
+			cond = userAllPublicRepoCond(cond, orgVisibilityLimit, user)
 		}
 	}
 

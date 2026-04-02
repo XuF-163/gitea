@@ -393,8 +393,8 @@ func GetUserRepoPermission(ctx context.Context, repo *repo_model.Repository, use
 	}
 	perm.units = repo.Units
 
-	// anonymous user visit private repo.
-	if user == nil && repo.IsPrivate {
+	// anonymous user visit private/internal repo.
+	if user == nil && (repo.IsPrivate || repo.IsInternal) {
 		perm.AccessMode = perm_model.AccessModeNone
 		return perm, nil
 	}
@@ -441,8 +441,13 @@ func GetUserRepoPermission(ctx context.Context, repo *repo_model.Repository, use
 		return perm, nil
 	}
 
-	// now: the owner is visible to doer, if the repo is public, then the min access mode is read
-	minAccessMode := util.Iif(!repo.IsPrivate && !user.IsRestricted, perm_model.AccessModeRead, perm_model.AccessModeNone)
+	// now: the owner is visible to doer, if the repo is visible, then the min access mode is read
+	minAccessMode := perm_model.AccessModeNone
+	if !repo.IsPrivate && !user.IsRestricted {
+		if !repo.IsInternal || user.UserLevel >= repo.InternalMinUserLevel {
+			minAccessMode = perm_model.AccessModeRead
+		}
+	}
 	perm.AccessMode = max(perm.AccessMode, minAccessMode)
 
 	// get units mode from teams

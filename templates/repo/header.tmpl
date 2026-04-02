@@ -16,15 +16,15 @@
 						<span class="ui basic label not-mobile">{{ctx.Locale.Tr "repo.desc.archived"}}</span>
 						<div class="repo-icon only-mobile" data-tooltip-content="{{ctx.Locale.Tr "repo.desc.archived"}}">{{svg "octicon-archive" 18}}</div>
 					{{end}}
-					{{if .IsPrivate}}
-						<span class="ui basic label not-mobile">{{ctx.Locale.Tr "repo.desc.private"}}</span>
-						<div class="repo-icon only-mobile" data-tooltip-content="{{ctx.Locale.Tr "repo.desc.private"}}">{{svg "octicon-lock" 18}}</div>
-					{{else}}
-						{{if .Owner.Visibility.IsPrivate}}
-							<span class="ui basic label not-mobile">{{ctx.Locale.Tr "repo.desc.internal"}}</span>
-							<div class="repo-icon only-mobile" data-tooltip-content="{{ctx.Locale.Tr "repo.desc.internal"}}">{{svg "octicon-shield-lock" 18}}</div>
+						{{if .IsPrivate}}
+							<span class="ui basic label not-mobile">{{ctx.Locale.Tr "repo.desc.private"}}</span>
+							<div class="repo-icon only-mobile" data-tooltip-content="{{ctx.Locale.Tr "repo.desc.private"}}">{{svg "octicon-lock" 18}}</div>
+						{{else}}
+							{{if or .IsInternal .Owner.Visibility.IsPrivate}}
+								<span class="ui basic label not-mobile">{{ctx.Locale.Tr "repo.desc.internal"}}</span>
+								<div class="repo-icon only-mobile" data-tooltip-content="{{ctx.Locale.Tr "repo.desc.internal"}}">{{svg "octicon-shield-lock" 18}}</div>
+							{{end}}
 						{{end}}
-					{{end}}
 					{{if $.Permission.HasAnyUnitPublicAccess}}
 						<span class="ui basic orange label">{{ctx.Locale.Tr "repo.desc.public_access"}}</span>
 					{{end}}

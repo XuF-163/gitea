@@ -57,13 +57,13 @@
 								{{if .IsArchived}}
 									<span class="ui basic label">{{ctx.Locale.Tr "repo.desc.archived"}}</span>
 								{{end}}
-								{{if .IsPrivate}}
-									<span class="ui basic label">{{ctx.Locale.Tr "repo.desc.private"}}</span>
-								{{else}}
-									{{if .Owner.Visibility.IsPrivate}}
-										<span class="ui basic label">{{ctx.Locale.Tr "repo.desc.internal"}}</span>
+									{{if .IsPrivate}}
+										<span class="ui basic label">{{ctx.Locale.Tr "repo.desc.private"}}</span>
+									{{else}}
+										{{if or .IsInternal .Owner.Visibility.IsPrivate}}
+											<span class="ui basic label">{{ctx.Locale.Tr "repo.desc.internal"}}</span>
+										{{end}}
 									{{end}}
-								{{end}}
 								{{if .IsTemplate}}
 									<span class="ui basic label">{{ctx.Locale.Tr "repo.desc.template"}}</span>
 								{{end}}

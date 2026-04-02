@@ -103,11 +103,28 @@ func (env *accessibleReposEnv) cond() builder.Cond {
 	if env.team != nil {
 		cond = cond.And(builder.Eq{"team_repo.team_id": env.team.ID})
 	} else {
-		if env.user == nil || !env.user.IsRestricted {
+		if env.user == nil || env.user.IsRestricted {
+			// Anonymous users and restricted users can only see fully public repositories.
 			cond = cond.Or(builder.Eq{
-				"`repository`.owner_id":   env.org.ID,
-				"`repository`.is_private": false,
+				"`repository`.owner_id":    env.org.ID,
+				"`repository`.is_private":  false,
+				"`repository`.is_internal": false,
 			})
+		} else {
+			// Signed-in non-restricted users can also see internal repositories (subject to user level).
+			cond = cond.Or(builder.And(
+				builder.Eq{
+					"`repository`.owner_id":   env.org.ID,
+					"`repository`.is_private": false,
+				},
+				builder.Or(
+					builder.Eq{"`repository`.is_internal": false},
+					builder.And(
+						builder.Eq{"`repository`.is_internal": true},
+						builder.Lte{"`repository`.internal_min_user_level": env.user.UserLevel},
+					),
+				),
+			))
 		}
 		if len(env.teamIDs) > 0 {
 			cond = cond.Or(builder.In("team_repo.team_id", env.teamIDs))

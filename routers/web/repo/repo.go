@@ -142,6 +142,16 @@ func getRepoPrivate(ctx *context.Context) bool {
 	}
 }
 
+func getRepoVisibility(ctx *context.Context) string {
+	if setting.Repository.ForcePrivate {
+		return "private"
+	}
+	if getRepoPrivate(ctx) {
+		return "private"
+	}
+	return "public"
+}
+
 func createCommon(ctx *context.Context) {
 	ctx.Data["Title"] = ctx.Tr("new_repo")
 	ctx.Data["Gitignores"] = repo_module.Gitignores
@@ -165,7 +175,9 @@ func Create(ctx *context.Context) {
 	ctx.Data["ContextUser"] = ctxUser
 
 	ctx.Data["readme"] = "Default"
+	ctx.Data["visibility"] = getRepoVisibility(ctx)
 	ctx.Data["private"] = getRepoPrivate(ctx)
+	ctx.Data["internal_min_user_level"] = 0
 	ctx.Data["default_branch"] = setting.Repository.DefaultBranch
 	ctx.Data["repo_template_name"] = ctx.Tr("repo.template_select")
 
@@ -237,13 +249,33 @@ func CreatePost(ctx *context.Context) {
 		return
 	}
 
+	visibility := strings.ToLower(strings.TrimSpace(form.Visibility))
+	if visibility == "" {
+		if form.Private {
+			visibility = "private"
+		} else {
+			visibility = "public"
+		}
+	}
+	if setting.Repository.ForcePrivate {
+		visibility = "private"
+	}
+	isPrivate := visibility == "private"
+	isInternal := visibility == "internal"
+	internalMinUserLevel := 0
+	if isInternal && !isPrivate {
+		internalMinUserLevel = form.InternalMinUserLevel
+	}
+
 	var repo *repo_model.Repository
 	var err error
 	if form.RepoTemplate > 0 {
 		opts := repo_service.GenerateRepoOptions{
 			Name:            form.RepoName,
 			Description:     form.Description,
-			Private:         form.Private || setting.Repository.ForcePrivate,
+			Private:         isPrivate,
+			Internal:        isInternal,
+			InternalMinUserLevel: internalMinUserLevel,
 			GitContent:      form.GitContent,
 			Topics:          form.Topics,
 			GitHooks:        form.GitHooks,
@@ -282,7 +314,9 @@ func CreatePost(ctx *context.Context) {
 			IssueLabels:      form.IssueLabels,
 			License:          form.License,
 			Readme:           form.Readme,
-			IsPrivate:        form.Private || setting.Repository.ForcePrivate,
+			IsPrivate:        isPrivate,
+			IsInternal:       isInternal,
+			InternalMinUserLevel: internalMinUserLevel,
 			DefaultBranch:    form.DefaultBranch,
 			AutoInit:         form.AutoInit,
 			IsTemplate:       form.Template,
@@ -549,7 +583,8 @@ func SearchRepo(ctx *context.Context) {
 				Stars:    repo.NumStars,
 				HTMLURL:  repo.HTMLURL(ctx),
 				Link:     repo.Link(),
-				Internal: !repo.IsPrivate && repo.Owner.Visibility == api.VisibleTypePrivate,
+				Internal: repo.IsInternal || (!repo.IsPrivate && repo.Owner.Visibility == api.VisibleTypePrivate),
+				InternalMinUserLevel: util.Iif(repo.IsInternal, repo.InternalMinUserLevel, 0),
 			},
 		}
 

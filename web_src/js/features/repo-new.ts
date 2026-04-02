@@ -74,18 +74,21 @@ export function initRepoNew() {
   updateUiAutoInit();
 
   const inputRepoName = form.querySelector<HTMLInputElement>('input[name="repo_name"]')!;
-  const inputPrivate = form.querySelector<HTMLInputElement>('input[name="private"]')!;
+  const inputVisibilitySelect = form.querySelector<HTMLSelectElement>('select[name="visibility"]');
+  const inputVisibilityHidden = form.querySelector<HTMLInputElement>('input[name="visibility"]');
+  const getVisibility = () => inputVisibilitySelect?.value ?? inputVisibilityHidden?.value ?? '';
   const updateUiRepoName = () => {
     const helps = form.querySelectorAll(`.help[data-help-for-repo-name]`);
     hideElem(helps);
     let help = form.querySelector(`.help[data-help-for-repo-name="${CSS.escape(inputRepoName.value)}"]`);
     if (!help) help = form.querySelector(`.help[data-help-for-repo-name=""]`)!;
     showElem(help);
-    const repoNamePreferPrivate: Record<string, boolean> = {'.profile': false, '.profile-private': true};
-    const preferPrivate = repoNamePreferPrivate[inputRepoName.value];
-    // inputPrivate might be disabled because site admin "force private"
-    if (preferPrivate !== undefined && !inputPrivate.closest('.disabled, [disabled]')) {
-      inputPrivate.checked = preferPrivate;
+    const repoNamePreferVisibility: Record<string, string> = {'.profile': 'public', '.profile-private': 'private'};
+    const preferVisibility = repoNamePreferVisibility[inputRepoName.value];
+    // inputVisibility might be disabled because site admin "force private"
+    if (preferVisibility !== undefined && inputVisibilitySelect && !inputVisibilitySelect.closest('.disabled, [disabled]')) {
+      // Fomantic UI dropdown needs to be updated by its own API
+      fomanticQuery(inputVisibilitySelect).dropdown('set selected', preferVisibility);
     }
   };
   inputRepoName.addEventListener('input', updateUiRepoName);
@@ -94,6 +97,16 @@ export function initRepoNew() {
     updateUiRepoName();
   });
   updateUiRepoName();
+
+  const elInternalMinUserLevelField = form.querySelector<HTMLElement>('[data-repo-internal-min-user-level]')!;
+  const inputInternalMinUserLevel = form.querySelector<HTMLSelectElement>('select[name="internal_min_user_level"]')!;
+  const updateUiInternalMinUserLevel = () => {
+    const visible = getVisibility() === 'internal';
+    toggleElem(elInternalMinUserLevelField, visible);
+    inputInternalMinUserLevel.disabled = !visible;
+  };
+  inputVisibilitySelect?.addEventListener('change', updateUiInternalMinUserLevel);
+  updateUiInternalMinUserLevel();
 
   initRepoNewTemplateSearch(form);
 }

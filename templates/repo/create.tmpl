@@ -45,16 +45,32 @@
 
 				<div class="inline field">
 					<label>{{ctx.Locale.Tr "repo.visibility"}}</label>
-					<div class="ui checkbox">
-						{{if .IsForcedPrivate}}
-							<input name="private" type="checkbox" checked disabled>
-							<label>{{ctx.Locale.Tr "repo.visibility_helper_forced"}}</label>
-						{{else}}
-							<input name="private" type="checkbox" {{if .private}}checked{{end}}>
-							<label>{{ctx.Locale.Tr "repo.visibility_helper"}}</label>
-						{{end}}
-					</div>
-					<span class="help">{{ctx.Locale.Tr "repo.visibility_description"}}</span>
+					{{if .IsForcedPrivate}}
+						<input type="hidden" name="visibility" value="private">
+						<select class="ui dropdown selection" disabled>
+							<option value="public">{{ctx.Locale.Tr "repo.desc.public"}}</option>
+							<option value="internal">{{ctx.Locale.Tr "repo.desc.internal"}}</option>
+							<option value="private" selected>{{ctx.Locale.Tr "repo.desc.private"}}</option>
+						</select>
+						<span class="help">{{ctx.Locale.Tr "repo.visibility_helper_forced"}}</span>
+					{{else}}
+						<select class="ui dropdown selection" name="visibility">
+							<option value="public" {{if eq .visibility "public"}}selected{{end}}>{{ctx.Locale.Tr "repo.desc.public"}}</option>
+							<option value="internal" {{if eq .visibility "internal"}}selected{{end}}>{{ctx.Locale.Tr "repo.desc.internal"}}</option>
+							<option value="private" {{if eq .visibility "private"}}selected{{end}}>{{ctx.Locale.Tr "repo.desc.private"}}</option>
+						</select>
+					{{end}}
+				</div>
+				<div class="inline field" data-repo-internal-min-user-level>
+					<label>{{ctx.Locale.Tr "repo.visibility_min_user_level"}}</label>
+					<select class="ui dropdown selection" name="internal_min_user_level">
+						<option value="0" {{if eq .internal_min_user_level 0}}selected{{end}}>0</option>
+						<option value="1" {{if eq .internal_min_user_level 1}}selected{{end}}>1</option>
+						<option value="2" {{if eq .internal_min_user_level 2}}selected{{end}}>2</option>
+						<option value="3" {{if eq .internal_min_user_level 3}}selected{{end}}>3</option>
+						<option value="4" {{if eq .internal_min_user_level 4}}selected{{end}}>4</option>
+					</select>
+					<span class="help">{{ctx.Locale.Tr "repo.visibility_min_user_level_helper"}}</span>
 				</div>
 				<div class="inline field {{if .Err_Description}}error{{end}}">
 					<label for="description">{{ctx.Locale.Tr "repo.repo_desc"}}</label>

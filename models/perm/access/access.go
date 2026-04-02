@@ -37,19 +37,31 @@ func accessLevel(ctx context.Context, user *user_model.User, repo *repo_model.Re
 	mode := perm.AccessModeNone
 	var userID int64
 	restricted := false
+	userLevel := 0
 
 	if user != nil {
 		userID = user.ID
 		restricted = user.IsRestricted
+		userLevel = user.UserLevel
 	}
 
 	if err := repo.LoadOwner(ctx); err != nil {
 		return mode, err
 	}
 
-	repoIsFullyPublic := !setting.Service.RequireSignInViewStrict && repo.Owner.Visibility == structs.VisibleTypePublic && !repo.IsPrivate
-	if (restricted && repoIsFullyPublic) || (!restricted && !repo.IsPrivate) {
-		mode = perm.AccessModeRead
+	repoIsFullyPublic := !setting.Service.RequireSignInViewStrict && repo.Owner.Visibility == structs.VisibleTypePublic && !repo.IsPrivate && !repo.IsInternal
+
+	if !repo.IsPrivate {
+		if repo.IsInternal {
+			// Internal repositories require the viewer to be signed-in and meet the minimum user level.
+			if !restricted && userID > 0 && userLevel >= repo.InternalMinUserLevel {
+				mode = perm.AccessModeRead
+			}
+		} else {
+			if (restricted && repoIsFullyPublic) || !restricted {
+				mode = perm.AccessModeRead
+			}
+		}
 	}
 
 	if userID == 0 {

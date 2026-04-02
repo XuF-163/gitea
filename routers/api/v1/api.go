@@ -254,12 +254,12 @@ func checkTokenPublicOnly() func(ctx *context.APIContext) {
 		// public Only permission check
 		switch {
 		case auth_model.ContainsCategory(requiredScopeCategories, auth_model.AccessTokenScopeCategoryRepository):
-			if ctx.Repo.Repository != nil && ctx.Repo.Repository.IsPrivate {
+			if ctx.Repo.Repository != nil && (ctx.Repo.Repository.IsPrivate || ctx.Repo.Repository.IsInternal) {
 				ctx.APIError(http.StatusForbidden, "token scope is limited to public repos")
 				return
 			}
 		case auth_model.ContainsCategory(requiredScopeCategories, auth_model.AccessTokenScopeCategoryIssue):
-			if ctx.Repo.Repository != nil && ctx.Repo.Repository.IsPrivate {
+			if ctx.Repo.Repository != nil && (ctx.Repo.Repository.IsPrivate || ctx.Repo.Repository.IsInternal) {
 				ctx.APIError(http.StatusForbidden, "token scope is limited to public issues")
 				return
 			}
@@ -283,7 +283,7 @@ func checkTokenPublicOnly() func(ctx *context.APIContext) {
 				return
 			}
 		case auth_model.ContainsCategory(requiredScopeCategories, auth_model.AccessTokenScopeCategoryNotification):
-			if ctx.Repo.Repository != nil && ctx.Repo.Repository.IsPrivate {
+			if ctx.Repo.Repository != nil && (ctx.Repo.Repository.IsPrivate || ctx.Repo.Repository.IsInternal) {
 				ctx.APIError(http.StatusForbidden, "token scope is limited to public notifications")
 				return
 			}

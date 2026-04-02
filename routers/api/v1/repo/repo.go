@@ -250,6 +250,12 @@ func CreateUserRepo(ctx *context.APIContext, owner *user_model.User, opt api.Cre
 		return
 	}
 
+	isPrivate := opt.Private || setting.Repository.ForcePrivate
+	internalMinUserLevel := 0
+	if opt.Internal && !isPrivate {
+		internalMinUserLevel = opt.InternalMinUserLevel
+	}
+
 	repo, err := repo_service.CreateRepository(ctx, ctx.Doer, owner, repo_service.CreateRepoOptions{
 		Name:             opt.Name,
 		Description:      opt.Description,
@@ -257,7 +263,9 @@ func CreateUserRepo(ctx *context.APIContext, owner *user_model.User, opt api.Cre
 		Gitignores:       opt.Gitignores,
 		License:          opt.License,
 		Readme:           opt.Readme,
-		IsPrivate:        opt.Private || setting.Repository.ForcePrivate,
+		IsPrivate:        isPrivate,
+		IsInternal:       opt.Internal && !isPrivate,
+		InternalMinUserLevel: internalMinUserLevel,
 		AutoInit:         opt.AutoInit,
 		DefaultBranch:    opt.DefaultBranch,
 		TrustModel:       repo_model.ToTrustModel(opt.TrustModel),
@@ -367,11 +375,19 @@ func Generate(ctx *context.APIContext) {
 		return
 	}
 
+	isPrivate := form.Private || setting.Repository.ForcePrivate
+	internalMinUserLevel := 0
+	if form.Internal && !isPrivate {
+		internalMinUserLevel = form.InternalMinUserLevel
+	}
+
 	opts := repo_service.GenerateRepoOptions{
 		Name:            form.Name,
 		DefaultBranch:   form.DefaultBranch,
 		Description:     form.Description,
-		Private:         form.Private || setting.Repository.ForcePrivate,
+		Private:         isPrivate,
+		Internal:        form.Internal && !isPrivate,
+		InternalMinUserLevel: internalMinUserLevel,
 		GitContent:      form.GitContent,
 		Topics:          form.Topics,
 		GitHooks:        form.GitHooks,
@@ -701,27 +717,61 @@ func updateBasicProperties(ctx *context.APIContext, opts api.EditRepoOption) err
 		repo.Website = *opts.Website
 	}
 
-	visibilityChanged := false
+	newIsPrivate := repo.IsPrivate
+	newIsInternal := repo.IsInternal
+	newInternalMinUserLevel := repo.InternalMinUserLevel
 	if opts.Private != nil {
-		// Visibility of forked repository is forced sync with base repository.
-		if repo.IsFork {
-			if err := repo.GetBaseRepo(ctx); err != nil {
-				ctx.APIErrorInternal(err)
-				return err
-			}
-			*opts.Private = repo.BaseRepo.IsPrivate
+		newIsPrivate = *opts.Private
+		if newIsPrivate {
+			newIsInternal = false
 		}
+	}
+	if opts.Internal != nil {
+		newIsInternal = *opts.Internal
+		if newIsInternal {
+			newIsPrivate = false
+		}
+	}
+	if opts.InternalMinUserLevel != nil {
+		newInternalMinUserLevel = *opts.InternalMinUserLevel
+	}
 
-		visibilityChanged = repo.IsPrivate != *opts.Private
-		// when ForcePrivate enabled, you could change public repo to private, but only admin users can change private to public
-		if visibilityChanged && setting.Repository.ForcePrivate && !*opts.Private && !ctx.Doer.IsAdmin {
-			err := errors.New("cannot change private repository to public")
-			ctx.APIError(http.StatusUnprocessableEntity, err)
+	// Visibility of forked repository is forced sync with base repository.
+	if repo.IsFork && (opts.Private != nil || opts.Internal != nil || opts.InternalMinUserLevel != nil) {
+		if err := repo.GetBaseRepo(ctx); err != nil {
+			ctx.APIErrorInternal(err)
 			return err
 		}
-
-		repo.IsPrivate = *opts.Private
+		newIsPrivate = repo.BaseRepo.IsPrivate
+		newIsInternal = repo.BaseRepo.IsInternal
+		newInternalMinUserLevel = repo.BaseRepo.InternalMinUserLevel
 	}
+
+	if newIsPrivate {
+		newIsInternal = false
+	}
+	if !newIsInternal || newIsPrivate {
+		newInternalMinUserLevel = 0
+	} else {
+		if newInternalMinUserLevel < 0 {
+			newInternalMinUserLevel = 0
+		}
+		if newInternalMinUserLevel > 4 {
+			newInternalMinUserLevel = 4
+		}
+	}
+
+	visibilityChanged := repo.IsPrivate != newIsPrivate || repo.IsInternal != newIsInternal || repo.InternalMinUserLevel != newInternalMinUserLevel
+	// when ForcePrivate enabled, you could change public repo to private, but only admin users can change private to public/internal
+	if visibilityChanged && repo.IsPrivate && !newIsPrivate && setting.Repository.ForcePrivate && !ctx.Doer.IsAdmin {
+		err := errors.New("cannot change private repository to public")
+		ctx.APIError(http.StatusUnprocessableEntity, err)
+		return err
+	}
+
+	repo.IsPrivate = newIsPrivate
+	repo.IsInternal = newIsInternal
+	repo.InternalMinUserLevel = newInternalMinUserLevel
 
 	if opts.Template != nil {
 		repo.IsTemplate = *opts.Template

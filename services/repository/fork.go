@@ -87,6 +87,11 @@ func ForkRepository(ctx context.Context, doer, owner *user_model.User, opts Fork
 	if opts.SingleBranch != "" {
 		defaultBranch = opts.SingleBranch
 	}
+	isPrivate := opts.BaseRepo.IsPrivate || opts.BaseRepo.Owner.Visibility == structs.VisibleTypePrivate
+	internalMinUserLevel := 0
+	if !isPrivate && opts.BaseRepo.IsInternal {
+		internalMinUserLevel = opts.BaseRepo.InternalMinUserLevel
+	}
 	repo := &repo_model.Repository{
 		OwnerID:          owner.ID,
 		Owner:            owner,
@@ -95,7 +100,9 @@ func ForkRepository(ctx context.Context, doer, owner *user_model.User, opts Fork
 		LowerName:        strings.ToLower(opts.Name),
 		Description:      opts.Description,
 		DefaultBranch:    defaultBranch,
-		IsPrivate:        opts.BaseRepo.IsPrivate || opts.BaseRepo.Owner.Visibility == structs.VisibleTypePrivate,
+		IsPrivate:        isPrivate,
+		IsInternal:       !isPrivate && opts.BaseRepo.IsInternal,
+		InternalMinUserLevel: internalMinUserLevel,
 		IsEmpty:          opts.BaseRepo.IsEmpty,
 		IsFork:           true,
 		ForkID:           opts.BaseRepo.ID,

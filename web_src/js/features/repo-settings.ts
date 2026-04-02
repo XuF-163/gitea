@@ -123,6 +123,20 @@ function initRepoSettingsOptions() {
   const pageContent = document.querySelector('.page-content.repository.settings.options');
   if (!pageContent) return;
 
+  // Toggle the "internal min user level" field by visibility selection
+  const visibilitySelect = pageContent.querySelector<HTMLSelectElement>('#visibility-repo-modal select[name="visibility"]');
+  const internalMinUserLevelField = pageContent.querySelector<HTMLElement>('#visibility-repo-modal [data-repo-internal-min-user-level]');
+  const internalMinUserLevelSelect = pageContent.querySelector<HTMLSelectElement>('#visibility-repo-modal select[name="internal_min_user_level"]');
+  if (visibilitySelect && internalMinUserLevelField && internalMinUserLevelSelect) {
+    const updateUiInternalMinUserLevel = () => {
+      const visible = visibilitySelect.value === 'internal';
+      toggleElem(internalMinUserLevelField, visible);
+      internalMinUserLevelSelect.disabled = !visible;
+    };
+    visibilitySelect.addEventListener('change', updateUiInternalMinUserLevel);
+    updateUiInternalMinUserLevel();
+  }
+
   // toggle related panels for the checkbox/radio inputs, the "selector" may not exist
   const toggleTargetContextPanel = (selector: string, enabled: boolean) => {
     if (!selector) return;
