@@ -4,6 +4,7 @@
 package oauth2
 
 import (
+	"code.gitea.io/gitea/modules/auth/linuxdo"
 	"code.gitea.io/gitea/modules/setting"
 
 	"github.com/markbates/goth"
@@ -106,4 +107,9 @@ func init() {
 			return microsoftonline.New(clientID, secret, callbackURL, scopes...)
 		},
 	))
+
+	RegisterGothProvider(NewSimpleProvider("linuxdo", "LinuxDo", nil,
+		func(clientKey, secret, callbackURL string, scopes ...string) goth.Provider {
+			return linuxdo.New(clientKey, secret, callbackURL, scopes...)
+		}))
 }
