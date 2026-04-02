@@ -135,7 +135,7 @@ func MakeRepoPrivate(ctx context.Context, repo *repo_model.Repository, private b
 			repo.InternalMinUserLevel = 0
 			cols = append(cols, "internal_min_user_level")
 		}
-		if err := repo_model.UpdateRepositoryColsNoAutoTime(ctx, repo, cols...); err != nil {
+		if err := repo_model.UpdateRepositoryColsNoAutoTime(ctx, repo, cols[0], cols[1:]...); err != nil {
 			return err
 		}
 
