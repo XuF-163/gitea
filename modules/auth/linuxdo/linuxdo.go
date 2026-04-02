@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/markbates/goth"
@@ -145,6 +146,17 @@ func userFromReader(r io.Reader, user *goth.User) error {
 	user.Name = u.Name
 	if user.Name == "" {
 		user.Name = u.Username
+	}
+	if user.Email == "" && u.Username != "" {
+		// LinuxDo doesn't provide email. Generate a deterministic placeholder so that
+		// Gitea's OAuth2 auto-registration can still work.
+		//
+		// NOTE: Gitea's email validation rejects emails starting with "-".
+		username := strings.ToLower(u.Username)
+		if strings.HasPrefix(username, "-") {
+			username = "u" + username
+		}
+		user.Email = username + "@gitea"
 	}
 
 	return nil
