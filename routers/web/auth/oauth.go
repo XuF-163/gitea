@@ -12,6 +12,7 @@ import (
 	"net/http"
 	"net/url"
 	"sort"
+	"strconv"
 	"strings"
 
 	"code.gitea.io/gitea/models/auth"
@@ -222,13 +223,77 @@ func claimValueToStringSet(claimValue any) container.Set[string] {
 		groups = rawGroup
 	case []any:
 		for _, group := range rawGroup {
-			groups = append(groups, fmt.Sprintf("%s", group))
+			groups = append(groups, fmt.Sprintf("%v", group))
 		}
 	default:
-		str := fmt.Sprintf("%s", rawGroup)
+		str := fmt.Sprintf("%v", rawGroup)
 		groups = strings.Split(str, ",")
 	}
 	return container.SetOf(groups...)
+}
+
+func requiredClaimValueMatches(claimValue any, required string) bool {
+	required = strings.TrimSpace(required)
+	if required == "" {
+		return true
+	}
+
+	if op, numStr, ok := parseNumericCompareOperator(required); ok {
+		requiredNum, err := strconv.ParseFloat(numStr, 64)
+		if err == nil {
+			if claimNum, ok := claimValueToFloat64(claimValue); ok {
+				switch op {
+				case ">=":
+					return claimNum >= requiredNum
+				case ">":
+					return claimNum > requiredNum
+				case "<=":
+					return claimNum <= requiredNum
+				case "<":
+					return claimNum < requiredNum
+				}
+			}
+		}
+	}
+
+	groups := claimValueToStringSet(claimValue)
+	return groups.Contains(required)
+}
+
+func parseNumericCompareOperator(input string) (op string, numStr string, ok bool) {
+	input = strings.TrimSpace(input)
+	for _, op := range []string{">=", "<=", ">", "<"} {
+		if strings.HasPrefix(input, op) {
+			return op, strings.TrimSpace(input[len(op):]), true
+		}
+	}
+	return "", "", false
+}
+
+func claimValueToFloat64(v any) (float64, bool) {
+	switch v := v.(type) {
+	case float64:
+		return v, true
+	case float32:
+		return float64(v), true
+	case int:
+		return float64(v), true
+	case int64:
+		return float64(v), true
+	case int32:
+		return float64(v), true
+	case uint:
+		return float64(v), true
+	case uint64:
+		return float64(v), true
+	case uint32:
+		return float64(v), true
+	case string:
+		f, err := strconv.ParseFloat(strings.TrimSpace(v), 64)
+		return f, err == nil
+	default:
+		return 0, false
+	}
 }
 
 func syncGroupsToTeams(ctx *context.Context, source *oauth2.Source, gothUser *goth.User, u *user_model.User) error {
@@ -468,9 +533,7 @@ func oAuth2UserLoginCallback(ctx *context.Context, authSource *auth.Source, requ
 		}
 
 		if oauth2Source.RequiredClaimValue != "" {
-			groups := claimValueToStringSet(claimInterface)
-
-			if !groups.Contains(oauth2Source.RequiredClaimValue) {
+			if !requiredClaimValueMatches(claimInterface, oauth2Source.RequiredClaimValue) {
 				return nil, goth.User{}, user_model.ErrUserProhibitLogin{Name: gothUser.UserID}
 			}
 		}
