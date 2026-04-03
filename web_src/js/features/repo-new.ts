@@ -100,12 +100,19 @@ export function initRepoNew() {
 
   const elInternalMinUserLevelField = form.querySelector<HTMLElement>('[data-repo-internal-min-user-level]')!;
   const inputInternalMinUserLevel = form.querySelector<HTMLSelectElement>('select[name="internal_min_user_level"]')!;
-  const updateUiInternalMinUserLevel = () => {
-    const visible = getVisibility() === 'internal';
+  const updateUiInternalMinUserLevel = (visibility = getVisibility()) => {
+    const visible = visibility === 'internal';
     toggleElem(elInternalMinUserLevelField, visible);
     inputInternalMinUserLevel.disabled = !visible;
   };
-  inputVisibilitySelect?.addEventListener('change', updateUiInternalMinUserLevel);
+  inputVisibilitySelect?.addEventListener('change', () => updateUiInternalMinUserLevel());
+  if (inputVisibilitySelect) {
+    fomanticQuery(inputVisibilitySelect).dropdown('setting', {
+      onChange(_text: string, value: string) {
+        updateUiInternalMinUserLevel(value);
+      },
+    });
+  }
   updateUiInternalMinUserLevel();
 
   initRepoNewTemplateSearch(form);
