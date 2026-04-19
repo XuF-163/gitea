@@ -128,12 +128,17 @@ function initRepoSettingsOptions() {
   const internalMinUserLevelField = pageContent.querySelector<HTMLElement>('#visibility-repo-modal [data-repo-internal-min-user-level]');
   const internalMinUserLevelSelect = pageContent.querySelector<HTMLSelectElement>('#visibility-repo-modal select[name="internal_min_user_level"]');
   if (visibilitySelect && internalMinUserLevelField && internalMinUserLevelSelect) {
-    const updateUiInternalMinUserLevel = () => {
-      const visible = visibilitySelect.value === 'internal';
+    const updateUiInternalMinUserLevel = (visibility = visibilitySelect.value) => {
+      const visible = visibility === 'internal';
       toggleElem(internalMinUserLevelField, visible);
       internalMinUserLevelSelect.disabled = !visible;
     };
-    visibilitySelect.addEventListener('change', updateUiInternalMinUserLevel);
+    visibilitySelect.addEventListener('change', () => updateUiInternalMinUserLevel());
+    fomanticQuery(visibilitySelect).dropdown('setting', {
+      onChange(_text: string, value: string) {
+        updateUiInternalMinUserLevel(value);
+      },
+    });
     updateUiInternalMinUserLevel();
   }
 
