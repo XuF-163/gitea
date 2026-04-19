@@ -24,6 +24,7 @@ import (
 	"code.gitea.io/gitea/modules/optional"
 	"code.gitea.io/gitea/modules/session"
 	"code.gitea.io/gitea/modules/setting"
+	"code.gitea.io/gitea/modules/web/middleware"
 	source_service "code.gitea.io/gitea/services/auth/source"
 	"code.gitea.io/gitea/services/auth/source/oauth2"
 	"code.gitea.io/gitea/services/context"
@@ -50,7 +51,7 @@ func SignInOAuth(ctx *context.Context) {
 	user, gothUser, err := oAuth2UserLoginCallback(ctx, authSource, ctx.Req, ctx.Resp)
 	if err == nil && user != nil {
 		// we got the user without going through the whole OAuth2 authentication flow again
-		handleOAuth2SignIn(ctx, authSource, user, gothUser)
+		handleOAuth2SignIn(ctx, authSource, user, gothUser, false)
 		return
 	}
 
@@ -127,6 +128,7 @@ func SignInOAuthCallback(ctx *context.Context) {
 		return
 	}
 
+	isNewUser := false
 	if u == nil {
 		if ctx.Doer != nil {
 			// attach user to the current signed-in user
@@ -200,6 +202,7 @@ func SignInOAuthCallback(ctx *context.Context) {
 				// error already handled
 				return
 			}
+			isNewUser = true
 
 			if err := syncGroupsToTeams(ctx, source, &gothUser, u); err != nil {
 				ctx.ServerError("SyncGroupsToTeams", err)
@@ -212,7 +215,7 @@ func SignInOAuthCallback(ctx *context.Context) {
 		}
 	}
 
-	handleOAuth2SignIn(ctx, authSource, u, gothUser)
+	handleOAuth2SignIn(ctx, authSource, u, gothUser, isNewUser)
 }
 
 func claimValueToStringSet(claimValue any) container.Set[string] {
@@ -384,7 +387,7 @@ func oauth2UpdateAvatarIfNeed(ctx *context.Context, url string, u *user_model.Us
 	}
 }
 
-func handleOAuth2SignIn(ctx *context.Context, authSource *auth.Source, u *user_model.User, gothUser goth.User) {
+func handleOAuth2SignIn(ctx *context.Context, authSource *auth.Source, u *user_model.User, gothUser goth.User, isNewUser bool) {
 	oauth2SignInSync(ctx, authSource.ID, u, gothUser)
 	if ctx.Written() {
 		return
@@ -461,7 +464,7 @@ func handleOAuth2SignIn(ctx *context.Context, authSource *auth.Source, u *user_m
 			return
 		}
 
-		redirectAfterAuth(ctx)
+		redirectAfterOAuth2Auth(ctx, isNewUser)
 		return
 	}
 
@@ -489,6 +492,30 @@ func handleOAuth2SignIn(ctx *context.Context, authSource *auth.Source, u *user_m
 	}
 
 	ctx.Redirect(setting.AppSubURL + "/user/two_factor")
+}
+
+func redirectAfterOAuth2Auth(ctx *context.Context, isNewUser bool) {
+	if setting.Config().Instance.MaintenanceMode.Value(ctx).IsActive() {
+		// in maintenance mode, redirect to admin dashboard, it is the only accessible page
+		ctx.Redirect(setting.AppSubURL + "/-/admin")
+		return
+	}
+
+	hasValidAuthRedirect := false
+	if redirectTo := ctx.FormString("redirect_to"); redirectTo != "" && httplib.IsCurrentGiteaSiteURL(ctx, redirectTo) {
+		hasValidAuthRedirect = true
+	} else if redirectTo := middleware.GetRedirectToCookie(ctx.Req); redirectTo != "" && httplib.IsCurrentGiteaSiteURL(ctx, redirectTo) {
+		hasValidAuthRedirect = true
+	}
+
+	redirectTo := consumeAuthRedirectLink(ctx)
+	if isNewUser && !hasValidAuthRedirect {
+		// For auto-registered OAuth2 users, the login flow usually doesn't have a redirect target.
+		// In this case, send them to the repositories list they can access.
+		redirectTo = setting.AppSubURL + "/explore/repos"
+	}
+
+	ctx.RedirectToCurrentSite(redirectTo)
 }
 
 // OAuth2UserLoginCallback attempts to handle the callback from the OAuth2 provider and if successful

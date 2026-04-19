@@ -1091,3 +1091,79 @@ func TestSignInOauthCallbackSyncSSHKeys(t *testing.T) {
 		})
 	}
 }
+
+func TestOAuth2NewUserRedirectToAccessibleRepos(t *testing.T) {
+	defer tests.PrepareTestEnv(t)()
+
+	var mockServer *httptest.Server
+	mockServer = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/.well-known/openid-configuration":
+			_, _ = w.Write([]byte(`{
+				"issuer": "` + mockServer.URL + `",
+				"authorization_endpoint": "` + mockServer.URL + `/authorize",
+				"token_endpoint": "` + mockServer.URL + `/token",
+				"userinfo_endpoint": "` + mockServer.URL + `/userinfo"
+			}`))
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer mockServer.Close()
+
+	ctx := t.Context()
+	oauth2Source := oauth2.Source{
+		Provider:                      "openidConnect",
+		ClientID:                      "test-client-id",
+		FullNameClaimName:             "name",
+		OpenIDConnectAutoDiscoveryURL: mockServer.URL + "/.well-known/openid-configuration",
+	}
+	addOAuth2Source(t, "test-oidc-source-redirect", oauth2Source)
+	authSource, err := auth_model.GetActiveOAuth2SourceByAuthName(ctx, "test-oidc-source-redirect")
+	require.NoError(t, err)
+
+	t.Run("NoRedirectTarget", func(t *testing.T) {
+		session := emptyTestSession(t)
+
+		defer test.MockVariableValue(&setting.OAuth2Client.Username, "")()
+		defer test.MockVariableValue(&setting.OAuth2Client.EnableAutoRegistration, true)()
+		defer test.MockVariableValue(&gothic.CompleteUserAuth, func(res http.ResponseWriter, req *http.Request) (goth.User, error) {
+			return goth.User{
+				Provider: authSource.Cfg.(*oauth2.Source).Provider,
+				UserID:   "oidc-userid-redirect-1",
+				Email:    "oidc-email-redirect-1@example.com",
+				Name:     "Redirect User 1",
+			}, nil
+		})()
+
+		req := NewRequest(t, "GET", "/user/oauth2/test-oidc-source-redirect/callback?code=XYZ&state=XYZ")
+		resp := session.MakeRequest(t, req, http.StatusSeeOther)
+		assert.Equal(t, setting.AppSubURL+"/explore/repos", resp.Header().Get("Location"))
+	})
+
+	t.Run("WithRedirectCookie", func(t *testing.T) {
+		session := emptyTestSession(t)
+		baseURL, err := url.Parse(setting.AppURL)
+		require.NoError(t, err)
+		session.jar.SetCookies(baseURL, []*http.Cookie{{
+			Name:  "redirect_to",
+			Value: url.QueryEscape(setting.AppSubURL + "/user/settings/account"),
+			Path:  "/",
+		}})
+
+		defer test.MockVariableValue(&setting.OAuth2Client.Username, "")()
+		defer test.MockVariableValue(&setting.OAuth2Client.EnableAutoRegistration, true)()
+		defer test.MockVariableValue(&gothic.CompleteUserAuth, func(res http.ResponseWriter, req *http.Request) (goth.User, error) {
+			return goth.User{
+				Provider: authSource.Cfg.(*oauth2.Source).Provider,
+				UserID:   "oidc-userid-redirect-2",
+				Email:    "oidc-email-redirect-2@example.com",
+				Name:     "Redirect User 2",
+			}, nil
+		})()
+
+		req := NewRequest(t, "GET", "/user/oauth2/test-oidc-source-redirect/callback?code=XYZ&state=XYZ")
+		resp := session.MakeRequest(t, req, http.StatusSeeOther)
+		assert.Equal(t, setting.AppSubURL+"/user/settings/account", resp.Header().Get("Location"))
+	})
+}
