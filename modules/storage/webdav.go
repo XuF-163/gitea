@@ -18,11 +18,12 @@ import (
 	"strings"
 	"time"
 
+	"code.gitea.io/gitea/modules/log"
 	"code.gitea.io/gitea/modules/setting"
 )
 
-// 大文件分块上传阈值（50MB），超过此大小的文件将分块上传以避免 413 Payload Too Large
-const webdavChunkSize = 50 * 1024 * 1024
+// 大文件分块上传阈值（10MB），超过此大小的文件将分块上传以避免 413 Payload Too Large
+const webdavChunkSize = 10 * 1024 * 1024
 
 var _ ObjectStorage = &WebDAVStorage{}
 
@@ -330,36 +331,33 @@ func (s *WebDAVStorage) saveDirect(p string, r io.Reader, size int64) (int64, er
 	return written, nil
 }
 
-// saveChunked 将大文件分块上传：逐块读取，每块独立 PUT 到远程
-// 使用 Content-Range 头追加写入，兼容支持范围写入的 WebDAV 服务器
+// saveChunked 将大文件拆分为独立的分片文件上传，避免 413 Payload Too Large
+// 每个分片作为一个独立文件上传到 远程路径.__part_N，不依赖 Content-Range
 func (s *WebDAVStorage) saveChunked(p string, r io.Reader, size int64) (int64, error) {
 	var totalWritten int64
 	buf := make([]byte, 32*1024) // 读缓冲
 
-	for offset := int64(0); offset < size; {
-		remaining := size - offset
+	for partIdx := 0; ; partIdx++ {
+		remaining := size - totalWritten
+		if remaining <= 0 {
+			break
+		}
 		chunkLen := int64(webdavChunkSize)
 		if remaining < chunkLen {
 			chunkLen = remaining
 		}
 
-		// 使用 io.LimitReader 读取一个 chunk
 		lr := io.LimitReader(r, chunkLen)
+
+		// 每个分片上传为独立文件，如 path.__part_0, path.__part_1, ...
+		partPath := fmt.Sprintf("%s.__part_%d", p, partIdx)
 
 		pr, pw := io.Pipe()
 		respCh := make(chan *http.Response, 1)
 		errCh := make(chan error, 1)
 
-		// 判断是否需要使用 Content-Range
-		// 第一个 chunk 用普通 PUT，后续 chunk 用 Content-Range 追加
-		var headers http.Header
-		if offset > 0 {
-			headers = http.Header{}
-			headers.Set("Content-Range", fmt.Sprintf("bytes %d-%d/%d", offset, offset+chunkLen-1, size))
-		}
-
 		go func() {
-			resp, err := s.doRequestWithHeaders(http.MethodPut, p, pr, chunkLen, headers)
+			resp, err := s.doRequest(http.MethodPut, partPath, pr, chunkLen)
 			if err != nil {
 				errCh <- err
 				return
@@ -373,7 +371,7 @@ func (s *WebDAVStorage) saveChunked(p string, r io.Reader, size int64) (int64, e
 		var resp *http.Response
 		select {
 		case err := <-errCh:
-			return totalWritten, fmt.Errorf("failed to upload chunk at offset %d of %s: %w", offset, p, err)
+			return totalWritten, fmt.Errorf("failed to upload part %d of %s: %w", partIdx, p, err)
 		case resp = <-respCh:
 		}
 
@@ -383,10 +381,8 @@ func (s *WebDAVStorage) saveChunked(p string, r io.Reader, size int64) (int64, e
 
 		if resp != nil && resp.StatusCode != http.StatusOK &&
 			resp.StatusCode != http.StatusCreated &&
-			resp.StatusCode != http.StatusNoContent &&
-			// 部分服务器对 Content-Range 返回 206 Partial Content
-			resp.StatusCode != http.StatusPartialContent {
-			return totalWritten, fmt.Errorf("failed to upload chunk at offset %d of %s: %s", offset, p, resp.Status)
+			resp.StatusCode != http.StatusNoContent {
+			return totalWritten, fmt.Errorf("failed to upload part %d of %s: %s", partIdx, p, resp.Status)
 		}
 
 		if copyErr != nil && copyErr != io.EOF {
@@ -394,7 +390,16 @@ func (s *WebDAVStorage) saveChunked(p string, r io.Reader, size int64) (int64, e
 		}
 
 		totalWritten += written
-		offset += chunkLen
+	}
+
+	// 上传分片清单文件，记录原始文件名和分片数量，用于还原时拼接
+	manifest := fmt.Sprintf("%s\n%d\n", path.Base(p), (totalWritten+int64(webdavChunkSize)-1)/int64(webdavChunkSize))
+	manifestPath := p + ".__manifest"
+	manifestReader := strings.NewReader(manifest)
+	if _, err := s.saveDirect(manifestPath, manifestReader, int64(len(manifest))); err != nil {
+		// 清单上传失败不致命，仅记录
+		// 如果没有清单，还原时仍可通过 .__part_ 文件模式检测分片
+		log.Warn("Failed to upload manifest for %s: %v", p, err)
 	}
 
 	return totalWritten, nil
