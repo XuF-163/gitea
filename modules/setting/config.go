@@ -89,6 +89,7 @@ func initDefaultConfig() {
 			SkipLFS:       config.NewOption[bool]("backup.skip_lfs").WithFileConfig(config.CfgSecKey{Sec: "backup", Key: "SKIP_LFS"}),
 			SkipAttach:    config.NewOption[bool]("backup.skip_attachments").WithFileConfig(config.CfgSecKey{Sec: "backup", Key: "SKIP_ATTACHMENTS"}),
 			SkipPackages:  config.NewOption[bool]("backup.skip_packages").WithFileConfig(config.CfgSecKey{Sec: "backup", Key: "SKIP_PACKAGES"}),
+			RetentionDays: config.NewOption[int]("backup.retention_days").WithDefaultSimple(7).WithFileConfig(config.CfgSecKey{Sec: "backup", Key: "RETENTION_DAYS"}),
 		},
 	}
 }

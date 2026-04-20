@@ -317,6 +317,10 @@ func (m *MinioStorage) IterateObjects(dirName string, fn func(path string, obj O
 	return nil
 }
 
+func (m *MinioStorage) MkdirAll(_ string) error {
+	return nil
+}
+
 func init() {
 	RegisterStorageType(setting.MinioStorageType, NewMinioStorage)
 }

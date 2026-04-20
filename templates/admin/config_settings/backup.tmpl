@@ -72,6 +72,12 @@
 		{{/* 跳过选项 */}}
 		{{$cfgOpt = $.SystemConfig.Backup.SkipLFS}}
 		{{$cfgKey = $cfgOpt.DynKey}}
+		<dt>{{ctx.Locale.Tr "admin.config.backup_retention_days"}}</dt>
+		<dd>
+			{{$cfgRetOpt := $.SystemConfig.Backup.RetentionDays}}
+			<input type="number" name="{{$cfgRetOpt.DynKey}}" value="{{$cfgRetOpt.Value ctx}}" min="1" step="1" data-config-value-type="number">
+		</dd>
+
 		<dt>{{ctx.Locale.Tr "admin.config.backup_skip_lfs"}}</dt>
 		<dd>
 			<div class="ui toggle checkbox">

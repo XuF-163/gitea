@@ -116,6 +116,10 @@ type ObjectStorage interface {
 	// * IterateObjects("", ...): iterate all objects in this storage
 	// * IterateObjects("sub-path", ...): iterate all objects with "sub-path" as prefix in this storage, the "fullPath" will be like "sub-path/xxx"
 	IterateObjects(basePath string, iterator func(fullPath string, obj Object) error) error
+
+	// MkdirAll 递归创建指定路径的所有目录（类似 os.MkdirAll）
+	// 对于不支持目录概念的存储后端（如 S3），返回 nil
+	MkdirAll(path string) error
 }
 
 // Copy copies a file from source ObjectStorage to dest ObjectStorage

@@ -3277,6 +3277,7 @@
   "admin.config.backup_webdav_timeout": "WebDAV 超时（秒）",
   "admin.config.backup_webdav_insecure_skip_verify": "跳过 TLS 校验",
   "admin.config.backup_format": "备份格式",
+  "admin.config.backup_retention_days": "保留天数",
   "admin.config.backup_skip_lfs": "跳过 LFS 数据",
   "admin.config.backup_skip_attachments": "跳过附件",
   "admin.config.backup_skip_packages": "跳过包",

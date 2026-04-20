@@ -341,6 +341,10 @@ func (a *AzureBlobStorage) getBlobClient(path string) *blob.Client {
 	return a.client.ServiceClient().NewContainerClient(a.cfg.Container).NewBlobClient(a.buildAzureBlobPath(path))
 }
 
+func (a *AzureBlobStorage) MkdirAll(_ string) error {
+	return nil
+}
+
 func init() {
 	RegisterStorageType(setting.AzureBlobStorageType, NewAzureBlobStorage)
 }

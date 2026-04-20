@@ -39,6 +39,10 @@ func (s discardStorage) IterateObjects(_ string, _ func(string, Object) error) e
 	return fmt.Errorf("%s", s)
 }
 
+func (s discardStorage) MkdirAll(_ string) error {
+	return fmt.Errorf("%s", s)
+}
+
 // IsDiscardStorage checks whether the given ObjectStorage is a discardStorage (placeholder)
 func IsDiscardStorage(s ObjectStorage) bool {
 	_, ok := s.(*discardStorage)

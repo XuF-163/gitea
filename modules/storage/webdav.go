@@ -478,6 +478,39 @@ func (s *WebDAVStorage) IterateObjects(prefix string, fn func(string, Object) er
 	return nil
 }
 
+// MkdirAll 使用 MKCOL 递归创建目录路径，类似 os.MkdirAll
+func (s *WebDAVStorage) MkdirAll(p string) error {
+	p = normalizeStoragePath(p)
+	if p == "" {
+		return nil
+	}
+
+	// 逐级创建路径中的每个目录
+	parts := strings.Split(p, "/")
+	currentPath := ""
+	for _, part := range parts {
+		if part == "" {
+			continue
+		}
+		if currentPath != "" {
+			currentPath += "/"
+		}
+		currentPath += part
+
+		resp, err := s.doRequest("MKCOL", currentPath+"/", nil, -1)
+		if err != nil {
+			return fmt.Errorf("MKCOL %s: %w", currentPath, err)
+		}
+		resp.Body.Close()
+
+		// 201 Created = 新建成功，405 Method Not Allowed = 目录已存在
+		if resp.StatusCode != http.StatusCreated && resp.StatusCode != http.StatusMethodNotAllowed {
+			return fmt.Errorf("MKCOL %s: %s", currentPath, resp.Status)
+		}
+	}
+	return nil
+}
+
 type webdavPropfindEntry struct {
 	HRef    string
 	Size    int64

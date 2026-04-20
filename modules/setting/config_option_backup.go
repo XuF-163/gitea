@@ -26,4 +26,5 @@ type BackupSettingsStruct struct {
 	SkipLFS       *config.Option[bool]
 	SkipAttach    *config.Option[bool]
 	SkipPackages  *config.Option[bool]
+	RetentionDays *config.Option[int]
 }

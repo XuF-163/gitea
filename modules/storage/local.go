@@ -172,6 +172,10 @@ func (l *LocalStorage) IterateObjects(dirName string, fn func(path string, obj O
 	})
 }
 
+func (l *LocalStorage) MkdirAll(p string) error {
+	return os.MkdirAll(l.buildLocalPath(p), os.ModePerm)
+}
+
 func init() {
 	RegisterStorageType(setting.LocalStorageType, NewLocalStorage)
 }

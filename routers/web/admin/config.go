@@ -384,6 +384,7 @@ func syncBackupConfigToIni(ctx *context.Context) error {
 	sec.Key("SKIP_LFS").SetValue(strconv.FormatBool(backupCfg.SkipLFS.Value(ctx)))
 	sec.Key("SKIP_ATTACHMENTS").SetValue(strconv.FormatBool(backupCfg.SkipAttach.Value(ctx)))
 	sec.Key("SKIP_PACKAGES").SetValue(strconv.FormatBool(backupCfg.SkipPackages.Value(ctx)))
+	sec.Key("RETENTION_DAYS").SetValue(strconv.Itoa(backupCfg.RetentionDays.Value(ctx)))
 	sec.DeleteKey("SKIP_DB")
 
 	if err := cfg.SaveTo(setting.CustomConf); err != nil {

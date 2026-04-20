@@ -6,25 +6,22 @@ package cron
 import (
 	"context"
 	"fmt"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"sort"
-	"strconv"
 	"strings"
+	"time"
 
 	"code.gitea.io/gitea/models/db"
 	user_model "code.gitea.io/gitea/models/user"
-	"code.gitea.io/gitea/modules/dump"
 	"code.gitea.io/gitea/modules/log"
 	"code.gitea.io/gitea/modules/setting"
 	"code.gitea.io/gitea/modules/storage"
-	"code.gitea.io/gitea/modules/timeutil"
 )
 
 type BackupConfig struct {
 	BaseConfig
-	// Retention 配置：保留的备份文件数量（0 表示不限制）
-	Retention int
 }
 
 func registerBackupTask() {
@@ -35,299 +32,299 @@ func registerBackupTask() {
 			Schedule:        "@midnight",
 			NoticeOnSuccess: false,
 		},
-		Retention: 0, // 默认保留所有备份
 	}, func(ctx context.Context, _ *user_model.User, config Config) error {
-		backupConfig := config.(*BackupConfig)
-		return runBackupTask(ctx, backupConfig)
+		return runBackupTask(ctx)
 	})
 }
 
-func runBackupTask(ctx context.Context, cfg *BackupConfig) error {
-	// 检查备份存储是否已初始化（未配置或初始化失败）
+func runBackupTask(ctx context.Context) error {
 	if storage.IsDiscardStorage(storage.Backup) {
 		log.Error("Backup storage is not configured")
 		return fmt.Errorf("backup storage is not configured")
 	}
 
-	// Create temporary directory for backup
+	// 生成日期文件夹名 YYYY-MM-DD
+	dateDir := time.Now().UTC().Format("2006-01-02")
+	remoteBase := dateDir
+
+	log.Info("Starting daily backup to: %s/", remoteBase)
+
+	// 创建远程日期目录
+	if err := storage.Backup.MkdirAll(remoteBase); err != nil {
+		return fmt.Errorf("failed to create remote directory %s: %w", remoteBase, err)
+	}
+
+	// 上传仓库目录
+	log.Info("Uploading repositories from: %s", setting.RepoRootPath)
+	if err := uploadDirectory(remoteBase+"/repos", setting.RepoRootPath); err != nil {
+		return fmt.Errorf("failed to upload repos: %w", err)
+	}
+
+	// 上传 LFS 数据
+	if !setting.Backup.SkipLFS && setting.LFS.StartServer {
+		log.Info("Uploading LFS data")
+		if err := uploadStorageObjects(remoteBase+"/data/lfs", storage.LFS); err != nil {
+			return fmt.Errorf("failed to upload LFS: %w", err)
+		}
+	}
+
+	// 上传附件
+	if !setting.Backup.SkipAttachments {
+		log.Info("Uploading attachments")
+		if err := uploadStorageObjects(remoteBase+"/data/attachments", storage.Attachments); err != nil {
+			return fmt.Errorf("failed to upload attachments: %w", err)
+		}
+	}
+
+	// 上传包
+	if !setting.Backup.SkipPackages && setting.Packages.Enabled {
+		log.Info("Uploading packages")
+		if err := uploadStorageObjects(remoteBase+"/data/packages", storage.Packages); err != nil {
+			return fmt.Errorf("failed to upload packages: %w", err)
+		}
+	}
+
+	// 上传数据库 dump
+	log.Info("Uploading database dump")
 	tmpDir := filepath.Join(setting.AppDataPath, "tmp")
 	if err := os.MkdirAll(tmpDir, os.ModePerm); err != nil {
 		return fmt.Errorf("failed to create tmp dir: %w", err)
 	}
-
-	// Determine backup format
-	format := setting.Backup.Format
-	if format == "" {
-		format = "zip"
-	}
-
-	// Validate format
-	validFormat := false
-	for _, f := range dump.SupportedOutputTypes {
-		if f == format {
-			validFormat = true
-			break
-		}
-	}
-	if !validFormat {
-		return fmt.Errorf("unsupported backup format: %s", format)
-	}
-
-	// 生成备份文件名，格式：gitea-backup-{timestamp}.{format}
-	fileName := fmt.Sprintf("gitea-backup-%d.%s", timeutil.TimeStampNow(), format)
-	tmpFile := filepath.Join(tmpDir, fileName)
-
-	// 确保临时文件在函数结束时被清理
-	var tmpFileCreated bool
-	defer func() {
-		if tmpFileCreated {
-			os.Remove(tmpFile)
-		}
-	}()
-
-	// Create backup file
-	file, err := os.Create(tmpFile)
-	if err != nil {
-		return fmt.Errorf("failed to create backup file: %w", err)
-	}
-	tmpFileCreated = true
-
-	// Create dumper
-	dumper, err := dump.NewDumper(ctx, format, file)
-	if err != nil {
-		file.Close()
-		return fmt.Errorf("failed to create dumper: %w", err)
-	}
-	dumper.Verbose = true
-
-	// 使用 defer 确保 dumper 和 file 都被正确关闭
-	var dumperClosed, fileClosed bool
-	defer func() {
-		if !dumperClosed {
-			dumper.Close()
-		}
-		if !fileClosed {
-			file.Close()
-		}
-	}()
-
-	// Add repositories directory
-	log.Info("Adding repositories to backup: %s", setting.RepoRootPath)
-	if err := dumper.AddRecursiveExclude("repos", setting.RepoRootPath, nil); err != nil {
-		return fmt.Errorf("failed to add repos: %w", err)
-	}
-
-	// Add LFS data
-	if !setting.Backup.SkipLFS && setting.LFS.StartServer {
-		log.Info("Adding LFS data to backup")
-		if err := storage.LFS.IterateObjects("", func(objPath string, obj storage.Object) error {
-			info, err := obj.Stat()
-			if err != nil {
-				return err
-			}
-			return dumper.AddFileByReader(obj, info, filepath.Join("data", "lfs", objPath))
-		}); err != nil {
-			return fmt.Errorf("failed to add LFS: %w", err)
-		}
-	}
-
-	// Add Attachments
-	if !setting.Backup.SkipAttachments {
-		log.Info("Adding attachments to backup")
-		if err := storage.Attachments.IterateObjects("", func(objPath string, obj storage.Object) error {
-			info, err := obj.Stat()
-			if err != nil {
-				return err
-			}
-			return dumper.AddFileByReader(obj, info, filepath.Join("data", "attachments", objPath))
-		}); err != nil {
-			return fmt.Errorf("failed to add attachments: %w", err)
-		}
-	}
-
-	// Add Packages
-	if !setting.Backup.SkipPackages && setting.Packages.Enabled {
-		log.Info("Adding packages to backup")
-		if err := storage.Packages.IterateObjects("", func(objPath string, obj storage.Object) error {
-			info, err := obj.Stat()
-			if err != nil {
-				return err
-			}
-			return dumper.AddFileByReader(obj, info, filepath.Join("data", "packages", objPath))
-		}); err != nil {
-			return fmt.Errorf("failed to add packages: %w", err)
-		}
-	}
-
-	// Add database dump (always included)
-	log.Info("Adding database to backup")
 	dbFile := filepath.Join(tmpDir, "gitea-db.sql")
 	if err := db.DumpDatabase(dbFile, ""); err != nil {
 		return fmt.Errorf("failed to dump database: %w", err)
 	}
-
-	if err := dumper.AddFileByPath("gitea-db.sql", dbFile); err != nil {
+	if err := uploadFile(remoteBase+"/gitea-db.sql", dbFile); err != nil {
 		os.Remove(dbFile)
-		return fmt.Errorf("failed to add db dump: %w", err)
+		return fmt.Errorf("failed to upload database dump: %w", err)
 	}
-	os.Remove(dbFile) // db dump 已归档，删除临时文件
+	os.Remove(dbFile)
 
-	// 添加配置文件 app.ini
-	log.Info("Adding configuration file from %s", setting.CustomConf)
-	if err := dumper.AddFileByPath("app.ini", setting.CustomConf); err != nil {
-		log.Warn("Failed to include app.ini: %v", err)
+	// 上传配置文件
+	log.Info("Uploading configuration file: %s", setting.CustomConf)
+	if err := uploadFile(remoteBase+"/app.ini", setting.CustomConf); err != nil {
+		log.Warn("Failed to upload app.ini: %v", err)
 	}
 
-	// 添加自定义目录 custom/
+	// 上传 custom/ 目录
 	customDir, err := os.Stat(setting.CustomPath)
 	if err == nil && customDir.IsDir() {
-		if is, _ := dump.IsSubdir(setting.AppDataPath, setting.CustomPath); !is {
-			log.Info("Adding custom directory from %s", setting.CustomPath)
-			if err := dumper.AddRecursiveExclude("custom", setting.CustomPath, nil); err != nil {
-				log.Warn("Failed to include custom: %v", err)
-			}
-		} else {
-			log.Info("Custom dir %s is inside data dir %s, skipped", setting.CustomPath, setting.AppDataPath)
+		log.Info("Uploading custom directory from: %s", setting.CustomPath)
+		if err := uploadDirectory(remoteBase+"/custom", setting.CustomPath); err != nil {
+			log.Warn("Failed to upload custom: %v", err)
 		}
-	} else {
-		log.Info("Custom dir %s doesn't exist, skipped", setting.CustomPath)
 	}
 
-	// 添加数据目录 data/（排除已单独备份的子目录）
+	// 上传 data/ 目录（排除已单独上传的子目录）
 	if _, err := os.Stat(setting.AppDataPath); err == nil {
-		log.Info("Adding data directory from %s", setting.AppDataPath)
-		var excludes []string
-		excludes = append(excludes, setting.RepoRootPath)
-		excludes = append(excludes, setting.LFS.Storage.Path)
-		excludes = append(excludes, setting.Attachment.Storage.Path)
-		excludes = append(excludes, setting.Packages.Storage.Path)
-		excludes = append(excludes, setting.RepoArchive.Storage.Path)
-		excludes = append(excludes, setting.Log.RootPath)
-		if err := dumper.AddRecursiveExclude("data", setting.AppDataPath, excludes); err != nil {
-			log.Warn("Failed to include data directory: %v", err)
+		log.Info("Uploading data directory from: %s", setting.AppDataPath)
+		excludes := map[string]bool{
+			setting.RepoRootPath:             true,
+			setting.LFS.Storage.Path:         true,
+			setting.Attachment.Storage.Path:  true,
+			setting.Packages.Storage.Path:    true,
+			setting.RepoArchive.Storage.Path: true,
+			setting.Log.RootPath:             true,
+		}
+		if err := uploadDirectoryExcluding(remoteBase+"/data", setting.AppDataPath, excludes); err != nil {
+			log.Warn("Failed to upload data directory: %v", err)
 		}
 	}
 
-	// Close dumper and finalize archive
-	if err := dumper.Close(); err != nil {
-		return fmt.Errorf("failed to close dumper: %w", err)
-	}
-	dumperClosed = true
+	log.Info("Backup uploaded successfully to: %s/", remoteBase)
 
-	if err := file.Close(); err != nil {
-		return fmt.Errorf("failed to close backup file: %w", err)
-	}
-	fileClosed = true
-
-	// Open backup file for upload
-	backupFile, err := os.Open(tmpFile)
-	if err != nil {
-		return fmt.Errorf("failed to open backup file: %w", err)
-	}
-
-	// Upload to WebDAV storage using the globally initialized storage.Backup
-	log.Info("Uploading backup to storage: %s", fileName)
-	stat, err := backupFile.Stat()
-	if err != nil {
-		backupFile.Close()
-		return fmt.Errorf("failed to stat backup file: %w", err)
-	}
-
-	if _, err := storage.Backup.Save(fileName, backupFile, stat.Size()); err != nil {
-		backupFile.Close()
-		return fmt.Errorf("failed to upload backup: %w", err)
-	}
-	backupFile.Close()
-
-	log.Info("Backup uploaded successfully: %s", fileName)
-
-	// 备份轮转：按保留数量清理旧备份
-	if cfg.Retention > 0 {
-		if err := rotateBackups(cfg.Retention, fileName); err != nil {
-			// 轮转失败不影响本次备份成功状态，只记录警告
+	// 备份轮转：删除超过保留天数的日期文件夹
+	retentionDays := setting.Backup.RetentionDays
+	if retentionDays > 0 {
+		if err := rotateDailyBackups(retentionDays, dateDir); err != nil {
 			log.Warn("Backup rotation failed: %v", err)
 		}
 	}
 
-	log.Info("Backup completed successfully: %s", fileName)
+	log.Info("Backup completed successfully: %s/", remoteBase)
 	return nil
 }
 
-// rotateBackups 列出备份存储中的所有 gitea-backup-* 文件，
-// 按修改时间倒序，删除超出 retention 数量的旧备份。
-func rotateBackups(retention int, currentFileName string) error {
-	// List all backup files in storage
-	var files []string
+// uploadFile 上传单个本地文件到远程存储
+func uploadFile(remotePath, localPath string) error {
+	f, err := os.Open(localPath)
+	if err != nil {
+		return fmt.Errorf("open %s: %w", localPath, err)
+	}
+	defer f.Close()
 
-	iterErr := storage.Backup.IterateObjects("", func(path string, obj storage.Object) error {
-		if strings.HasPrefix(filepath.Base(path), "gitea-backup-") {
-			files = append(files, path)
+	stat, err := f.Stat()
+	if err != nil {
+		return fmt.Errorf("stat %s: %w", localPath, err)
+	}
+
+	if _, err := storage.Backup.Save(remotePath, f, stat.Size()); err != nil {
+		return fmt.Errorf("upload %s: %w", remotePath, err)
+	}
+	return nil
+}
+
+// uploadDirectory 递归遍历本地目录并逐文件上传到远程存储
+func uploadDirectory(remoteBase, localBase string) error {
+	return filepath.WalkDir(localBase, func(path string, d fs.DirEntry, err error) error {
+		if err != nil {
+			return err
 		}
-		return nil
+
+		relPath, err := filepath.Rel(localBase, path)
+		if err != nil {
+			return err
+		}
+		// 跳过根目录自身
+		if relPath == "." {
+			return nil
+		}
+
+		remotePath := remoteBase + "/" + filepath.ToSlash(relPath)
+
+		if d.IsDir() {
+			return storage.Backup.MkdirAll(remotePath)
+		}
+
+		return uploadFile(remotePath, path)
 	})
+}
 
-	if iterErr != nil {
-		return fmt.Errorf("failed to iterate backup files: %w", iterErr)
-	}
+// uploadDirectoryExcluding 递归上传目录，但跳过 excludes 中指定的绝对路径
+func uploadDirectoryExcluding(remoteBase, localBase string, excludes map[string]bool) error {
+	return filepath.WalkDir(localBase, func(path string, d fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
 
-	if len(files) == 0 || len(files) <= retention {
-		return nil
-	}
-
-	// 收集文件及其修改时间，按时间倒序
-	type fileWithTime struct {
-		path string
-		ts   int64
-	}
-	var fileInfos []fileWithTime
-	for _, f := range files {
-		fileName := filepath.Base(f)
-		ts, ok := parseBackupTimestamp(fileName)
-		if !ok {
-			info, err := storage.Backup.Stat(f)
-			if err != nil {
-				continue
+		// 跳过排除的目录
+		if excludes[path] {
+			if d.IsDir() {
+				return fs.SkipDir
 			}
-			ts = info.ModTime().Unix()
+			return nil
 		}
-		fileInfos = append(fileInfos, fileWithTime{path: f, ts: ts})
+
+		relPath, err := filepath.Rel(localBase, path)
+		if err != nil {
+			return err
+		}
+		if relPath == "." {
+			return nil
+		}
+
+		remotePath := remoteBase + "/" + filepath.ToSlash(relPath)
+
+		if d.IsDir() {
+			return storage.Backup.MkdirAll(remotePath)
+		}
+
+		return uploadFile(remotePath, path)
+	})
+}
+
+// uploadStorageObjects 从 ObjectStorage 逐对象上传到备份存储
+func uploadStorageObjects(remoteBase string, srcStore storage.ObjectStorage) error {
+	return srcStore.IterateObjects("", func(objPath string, obj storage.Object) error {
+		remotePath := remoteBase + "/" + objPath
+		info, err := obj.Stat()
+		if err != nil {
+			return err
+		}
+		_, err = storage.Backup.Save(remotePath, obj, info.Size())
+		return err
+	})
+}
+
+// rotateDailyBackups 删除超过保留天数的日期文件夹
+func rotateDailyBackups(retentionDays int, currentDateDir string) error {
+	type datedDir struct {
+		name string
+		date time.Time
 	}
 
-	if len(fileInfos) <= retention {
+	var dirs []datedDir
+
+	// 遍历备份存储根目录，收集所有日期文件夹
+	err := storage.Backup.IterateObjects("", func(path string, obj storage.Object) error {
+		// 仅处理顶层路径（日期文件夹中的文件）
+		parts := strings.SplitN(path, "/", 2)
+		dirName := parts[0]
+
+		// 检查是否符合 YYYY-MM-DD 格式
+		t, err := time.Parse("2006-01-02", dirName)
+		if err != nil {
+			return nil
+		}
+
+		// 去重：同一个日期文件夹可能有多个文件
+		for _, d := range dirs {
+			if d.name == dirName {
+				return nil
+			}
+		}
+
+		dirs = append(dirs, datedDir{name: dirName, date: t})
+		return nil
+	})
+	if err != nil {
+		return fmt.Errorf("failed to iterate backup directories: %w", err)
+	}
+
+	if len(dirs) == 0 {
 		return nil
 	}
 
-	sort.Slice(fileInfos, func(i, j int) bool {
-		return fileInfos[i].ts > fileInfos[j].ts
+	// 按日期升序排列
+	sort.Slice(dirs, func(i, j int) bool {
+		return dirs[i].date.Before(dirs[j].date)
 	})
 
-	// 删除超出保留数量的旧备份（跳过当前刚上传的文件）
+	// 计算截止日期：保留最近 retentionDays 天
+	cutoff := time.Now().UTC().AddDate(0, 0, -retentionDays)
+
 	deleted := 0
-	for i := retention; i < len(fileInfos); i++ {
-		if filepath.Base(fileInfos[i].path) == currentFileName {
+	for _, d := range dirs {
+		// 跳过当前正在备份的日期文件夹
+		if d.name == currentDateDir {
 			continue
 		}
-		if err := storage.Backup.Delete(fileInfos[i].path); err != nil {
-			log.Warn("Failed to delete old backup %s: %v", fileInfos[i].path, err)
+		// 只删除早于截止日期的文件夹
+		if !d.date.Before(cutoff) {
+			continue
+		}
+
+		// 删除该日期文件夹下的所有文件
+		if err := deleteRemoteDirectory(d.name); err != nil {
+			log.Warn("Failed to delete old backup directory %s: %v", d.name, err)
 			continue
 		}
 		deleted++
-		log.Info("Deleted old backup: %s", fileInfos[i].path)
+		log.Info("Deleted old backup directory: %s", d.name)
 	}
 
 	if deleted > 0 {
-		log.Info("Backup rotation: deleted %d old backup(s), kept %d", deleted, retention)
+		log.Info("Backup rotation: deleted %d old backup directory(ies), retention: %d days", deleted, retentionDays)
 	}
 
 	return nil
 }
 
-func parseBackupTimestamp(fileName string) (int64, bool) {
-	rest := strings.TrimPrefix(fileName, "gitea-backup-")
-	tsStr, _, hasDot := strings.Cut(rest, ".")
-	if !hasDot || tsStr == "" {
-		return 0, false
+// deleteRemoteDirectory 递归删除远程存储中指定前缀下的所有文件
+func deleteRemoteDirectory(prefix string) error {
+	var paths []string
+	err := storage.Backup.IterateObjects(prefix, func(path string, obj storage.Object) error {
+		paths = append(paths, path)
+		return nil
+	})
+	if err != nil {
+		return err
 	}
-	ts, err := strconv.ParseInt(tsStr, 10, 64)
-	return ts, err == nil
+
+	for _, p := range paths {
+		if err := storage.Backup.Delete(p); err != nil {
+			log.Warn("Failed to delete %s: %v", p, err)
+		}
+	}
+	return nil
 }

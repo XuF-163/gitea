@@ -14,6 +14,7 @@ var Backup = struct {
 	SkipLFS         bool
 	SkipAttachments bool
 	SkipPackages    bool
+	RetentionDays   int
 }{}
 
 func loadBackupFrom(rootCfg ConfigProvider) error {
@@ -28,6 +29,7 @@ func loadBackupFrom(rootCfg ConfigProvider) error {
 	Backup.SkipLFS = sec.Key("SKIP_LFS").MustBool(false)
 	Backup.SkipAttachments = sec.Key("SKIP_ATTACHMENTS").MustBool(false)
 	Backup.SkipPackages = sec.Key("SKIP_PACKAGES").MustBool(false)
+	Backup.RetentionDays = sec.Key("RETENTION_DAYS").MustInt(7)
 
 	if storageType := sec.Key("STORAGE_TYPE").String(); storageType == "" || storageType == "none" {
 		Backup.WebDAVStorage = nil

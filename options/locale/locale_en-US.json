@@ -3300,6 +3300,7 @@
   "admin.config.backup_storage_type": "Storage Type",
   "admin.config.backup_webdav_url": "WebDAV URL",
   "admin.config.backup_format": "Backup Format",
+  "admin.config.backup_retention_days": "Retention Days",
   "admin.config.backup_skip_lfs": "Skip LFS Data",
   "admin.config.backup_skip_attachments": "Skip Attachments",
   "admin.config.backup_skip_packages": "Skip Packages",
