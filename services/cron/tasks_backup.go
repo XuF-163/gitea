@@ -54,37 +54,29 @@ func runBackupTask(ctx context.Context) error {
 		return fmt.Errorf("failed to create remote directory %s: %w", remoteBase, err)
 	}
 
-	// 上传仓库目录
+	// 上传仓库目录（单个文件失败不中断整体备份）
 	log.Info("Uploading repositories from: %s", setting.RepoRootPath)
-	if err := uploadDirectory(remoteBase+"/repos", setting.RepoRootPath); err != nil {
-		return fmt.Errorf("failed to upload repos: %w", err)
-	}
+	uploadDirectoryWithTolerance(remoteBase+"/repos", setting.RepoRootPath)
 
 	// 上传 LFS 数据
 	if !setting.Backup.SkipLFS && setting.LFS.StartServer {
 		log.Info("Uploading LFS data")
-		if err := uploadStorageObjects(remoteBase+"/data/lfs", storage.LFS); err != nil {
-			return fmt.Errorf("failed to upload LFS: %w", err)
-		}
+		uploadStorageObjectsWithTolerance(remoteBase+"/data/lfs", storage.LFS)
 	}
 
 	// 上传附件
 	if !setting.Backup.SkipAttachments {
 		log.Info("Uploading attachments")
-		if err := uploadStorageObjects(remoteBase+"/data/attachments", storage.Attachments); err != nil {
-			return fmt.Errorf("failed to upload attachments: %w", err)
-		}
+		uploadStorageObjectsWithTolerance(remoteBase+"/data/attachments", storage.Attachments)
 	}
 
 	// 上传包
 	if !setting.Backup.SkipPackages && setting.Packages.Enabled {
 		log.Info("Uploading packages")
-		if err := uploadStorageObjects(remoteBase+"/data/packages", storage.Packages); err != nil {
-			return fmt.Errorf("failed to upload packages: %w", err)
-		}
+		uploadStorageObjectsWithTolerance(remoteBase+"/data/packages", storage.Packages)
 	}
 
-	// 上传数据库 dump
+	// 上传数据库 dump（关键数据，失败则整体报错）
 	log.Info("Uploading database dump")
 	tmpDir := filepath.Join(setting.AppDataPath, "tmp")
 	if err := os.MkdirAll(tmpDir, os.ModePerm); err != nil {
@@ -100,22 +92,20 @@ func runBackupTask(ctx context.Context) error {
 	}
 	os.Remove(dbFile)
 
-	// 上传配置文件
+	// 上传配置文件（关键数据，失败则整体报错）
 	log.Info("Uploading configuration file: %s", setting.CustomConf)
 	if err := uploadFile(remoteBase+"/app.ini", setting.CustomConf); err != nil {
-		log.Warn("Failed to upload app.ini: %v", err)
+		return fmt.Errorf("failed to upload app.ini: %w", err)
 	}
 
-	// 上传 custom/ 目录
+	// 上传 custom/ 目录（非关键，失败仅警告）
 	customDir, err := os.Stat(setting.CustomPath)
 	if err == nil && customDir.IsDir() {
 		log.Info("Uploading custom directory from: %s", setting.CustomPath)
-		if err := uploadDirectory(remoteBase+"/custom", setting.CustomPath); err != nil {
-			log.Warn("Failed to upload custom: %v", err)
-		}
+		uploadDirectoryWithTolerance(remoteBase+"/custom", setting.CustomPath)
 	}
 
-	// 上传 data/ 目录（排除已单独上传的子目录）
+	// 上传 data/ 目录（排除已单独上传的子目录，非关键）
 	if _, err := os.Stat(setting.AppDataPath); err == nil {
 		log.Info("Uploading data directory from: %s", setting.AppDataPath)
 		excludes := map[string]bool{
@@ -126,9 +116,7 @@ func runBackupTask(ctx context.Context) error {
 			setting.RepoArchive.Storage.Path: true,
 			setting.Log.RootPath:             true,
 		}
-		if err := uploadDirectoryExcluding(remoteBase+"/data", setting.AppDataPath, excludes); err != nil {
-			log.Warn("Failed to upload data directory: %v", err)
-		}
+		uploadDirectoryExcludingWithTolerance(remoteBase+"/data", setting.AppDataPath, excludes)
 	}
 
 	log.Info("Backup uploaded successfully to: %s/", remoteBase)
@@ -164,18 +152,18 @@ func uploadFile(remotePath, localPath string) error {
 	return nil
 }
 
-// uploadDirectory 递归遍历本地目录并逐文件上传到远程存储
-func uploadDirectory(remoteBase, localBase string) error {
-	return filepath.WalkDir(localBase, func(path string, d fs.DirEntry, err error) error {
+// uploadDirectoryWithTolerance 递归上传目录，单个文件失败时记录警告并继续
+func uploadDirectoryWithTolerance(remoteBase, localBase string) {
+	filepath.WalkDir(localBase, func(path string, d fs.DirEntry, err error) error {
 		if err != nil {
-			return err
+			log.Warn("Backup: skip inaccessible path %s: %v", path, err)
+			return nil
 		}
 
-		relPath, err := filepath.Rel(localBase, path)
-		if err != nil {
-			return err
+		relPath, relErr := filepath.Rel(localBase, path)
+		if relErr != nil {
+			return nil
 		}
-		// 跳过根目录自身
 		if relPath == "." {
 			return nil
 		}
@@ -183,21 +171,27 @@ func uploadDirectory(remoteBase, localBase string) error {
 		remotePath := remoteBase + "/" + filepath.ToSlash(relPath)
 
 		if d.IsDir() {
-			return storage.Backup.MkdirAll(remotePath)
+			if mkErr := storage.Backup.MkdirAll(remotePath); mkErr != nil {
+				log.Warn("Backup: failed to create remote dir %s: %v", remotePath, mkErr)
+			}
+			return nil
 		}
 
-		return uploadFile(remotePath, path)
+		if upErr := uploadFile(remotePath, path); upErr != nil {
+			log.Warn("Backup: failed to upload %s: %v", remotePath, upErr)
+		}
+		return nil
 	})
 }
 
-// uploadDirectoryExcluding 递归上传目录，但跳过 excludes 中指定的绝对路径
-func uploadDirectoryExcluding(remoteBase, localBase string, excludes map[string]bool) error {
-	return filepath.WalkDir(localBase, func(path string, d fs.DirEntry, err error) error {
+// uploadDirectoryExcludingWithTolerance 递归上传目录，跳过 excludes 路径，单个文件失败时记录警告并继续
+func uploadDirectoryExcludingWithTolerance(remoteBase, localBase string, excludes map[string]bool) {
+	filepath.WalkDir(localBase, func(path string, d fs.DirEntry, err error) error {
 		if err != nil {
-			return err
+			log.Warn("Backup: skip inaccessible path %s: %v", path, err)
+			return nil
 		}
 
-		// 跳过排除的目录
 		if excludes[path] {
 			if d.IsDir() {
 				return fs.SkipDir
@@ -205,9 +199,9 @@ func uploadDirectoryExcluding(remoteBase, localBase string, excludes map[string]
 			return nil
 		}
 
-		relPath, err := filepath.Rel(localBase, path)
-		if err != nil {
-			return err
+		relPath, relErr := filepath.Rel(localBase, path)
+		if relErr != nil {
+			return nil
 		}
 		if relPath == "." {
 			return nil
@@ -216,23 +210,32 @@ func uploadDirectoryExcluding(remoteBase, localBase string, excludes map[string]
 		remotePath := remoteBase + "/" + filepath.ToSlash(relPath)
 
 		if d.IsDir() {
-			return storage.Backup.MkdirAll(remotePath)
+			if mkErr := storage.Backup.MkdirAll(remotePath); mkErr != nil {
+				log.Warn("Backup: failed to create remote dir %s: %v", remotePath, mkErr)
+			}
+			return nil
 		}
 
-		return uploadFile(remotePath, path)
+		if upErr := uploadFile(remotePath, path); upErr != nil {
+			log.Warn("Backup: failed to upload %s: %v", remotePath, upErr)
+		}
+		return nil
 	})
 }
 
-// uploadStorageObjects 从 ObjectStorage 逐对象上传到备份存储
-func uploadStorageObjects(remoteBase string, srcStore storage.ObjectStorage) error {
-	return srcStore.IterateObjects("", func(objPath string, obj storage.Object) error {
+// uploadStorageObjectsWithTolerance 从 ObjectStorage 逐对象上传，单个失败时记录警告并继续
+func uploadStorageObjectsWithTolerance(remoteBase string, srcStore storage.ObjectStorage) {
+	srcStore.IterateObjects("", func(objPath string, obj storage.Object) error {
 		remotePath := remoteBase + "/" + objPath
-		info, err := obj.Stat()
-		if err != nil {
-			return err
+		info, statErr := obj.Stat()
+		if statErr != nil {
+			log.Warn("Backup: failed to stat object %s: %v", objPath, statErr)
+			return nil
 		}
-		_, err = storage.Backup.Save(remotePath, obj, info.Size())
-		return err
+		if _, saveErr := storage.Backup.Save(remotePath, obj, info.Size()); saveErr != nil {
+			log.Warn("Backup: failed to upload object %s: %v", remotePath, saveErr)
+		}
+		return nil
 	})
 }
 

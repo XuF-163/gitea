@@ -21,6 +21,9 @@ import (
 	"code.gitea.io/gitea/modules/setting"
 )
 
+// 大文件分块上传阈值（50MB），超过此大小的文件将分块上传以避免 413 Payload Too Large
+const webdavChunkSize = 50 * 1024 * 1024
+
 var _ ObjectStorage = &WebDAVStorage{}
 
 // WebDAVStorage represents a WebDAV storage
@@ -270,21 +273,25 @@ func (s *WebDAVStorage) Open(p string) (Object, error) {
 }
 
 // Save saves a file to WebDAV storage using streaming upload.
-// contentLength is used for the HTTP Content-Length header.
-// A negative contentLength will skip setting Content-Length (chunked transfer encoding).
-// Large file uploads are supported: body transfer has no time limit,
-// only connection establishment is subject to the configured timeout.
-// Caller's context controls overall operation timeout.
+// For files larger than webdavChunkSize, uses chunked upload to avoid 413 Payload Too Large errors.
 func (s *WebDAVStorage) Save(p string, r io.Reader, size int64) (int64, error) {
+	// 文件大小未知或小于阈值，直接上传
+	if size < 0 || size <= webdavChunkSize {
+		return s.saveDirect(p, r, size)
+	}
+
+	// 大文件分块上传
+	return s.saveChunked(p, r, size)
+}
+
+// saveDirect 直接上传整个文件
+func (s *WebDAVStorage) saveDirect(p string, r io.Reader, size int64) (int64, error) {
 	var contentLength int64 = -1
 	if size >= 0 {
 		contentLength = size
 	}
 
-	// 流式上传：io.Pipe 避免全量读入内存
-	// goroutine 持有读端，caller 持有写端
 	pr, pw := io.Pipe()
-
 	respCh := make(chan *http.Response, 1)
 	errCh := make(chan error, 1)
 
@@ -297,11 +304,9 @@ func (s *WebDAVStorage) Save(p string, r io.Reader, size int64) (int64, error) {
 		respCh <- resp
 	}()
 
-	// 将 caller 的数据流接入 PipeWriter，HTTP goroutine 会自动消费
 	written, copyErr := io.Copy(pw, r)
-	pw.CloseWithError(copyErr) // 通知读取端数据已全部写入（或出错）
+	pw.CloseWithError(copyErr)
 
-	// 等待 HTTP goroutine 完成
 	var resp *http.Response
 	select {
 	case err := <-errCh:
@@ -309,12 +314,10 @@ func (s *WebDAVStorage) Save(p string, r io.Reader, size int64) (int64, error) {
 	case resp = <-respCh:
 	}
 
-	// goroutine 已结束，resp.Body 现在可以安全关闭
 	if resp != nil {
 		defer resp.Body.Close()
 	}
 
-	// 检查 HTTP 状态码
 	if resp != nil && resp.StatusCode != http.StatusOK &&
 		resp.StatusCode != http.StatusCreated && resp.StatusCode != http.StatusNoContent {
 		return 0, fmt.Errorf("failed to upload %s: %s", p, resp.Status)
@@ -325,6 +328,76 @@ func (s *WebDAVStorage) Save(p string, r io.Reader, size int64) (int64, error) {
 	}
 
 	return written, nil
+}
+
+// saveChunked 将大文件分块上传：逐块读取，每块独立 PUT 到远程
+// 使用 Content-Range 头追加写入，兼容支持范围写入的 WebDAV 服务器
+func (s *WebDAVStorage) saveChunked(p string, r io.Reader, size int64) (int64, error) {
+	var totalWritten int64
+	buf := make([]byte, 32*1024) // 读缓冲
+
+	for offset := int64(0); offset < size; {
+		remaining := size - offset
+		chunkLen := int64(webdavChunkSize)
+		if remaining < chunkLen {
+			chunkLen = remaining
+		}
+
+		// 使用 io.LimitReader 读取一个 chunk
+		lr := io.LimitReader(r, chunkLen)
+
+		pr, pw := io.Pipe()
+		respCh := make(chan *http.Response, 1)
+		errCh := make(chan error, 1)
+
+		// 判断是否需要使用 Content-Range
+		// 第一个 chunk 用普通 PUT，后续 chunk 用 Content-Range 追加
+		var headers http.Header
+		if offset > 0 {
+			headers = http.Header{}
+			headers.Set("Content-Range", fmt.Sprintf("bytes %d-%d/%d", offset, offset+chunkLen-1, size))
+		}
+
+		go func() {
+			resp, err := s.doRequestWithHeaders(http.MethodPut, p, pr, chunkLen, headers)
+			if err != nil {
+				errCh <- err
+				return
+			}
+			respCh <- resp
+		}()
+
+		written, copyErr := io.CopyBuffer(pw, lr, buf)
+		pw.CloseWithError(copyErr)
+
+		var resp *http.Response
+		select {
+		case err := <-errCh:
+			return totalWritten, fmt.Errorf("failed to upload chunk at offset %d of %s: %w", offset, p, err)
+		case resp = <-respCh:
+		}
+
+		if resp != nil {
+			resp.Body.Close()
+		}
+
+		if resp != nil && resp.StatusCode != http.StatusOK &&
+			resp.StatusCode != http.StatusCreated &&
+			resp.StatusCode != http.StatusNoContent &&
+			// 部分服务器对 Content-Range 返回 206 Partial Content
+			resp.StatusCode != http.StatusPartialContent {
+			return totalWritten, fmt.Errorf("failed to upload chunk at offset %d of %s: %s", offset, p, resp.Status)
+		}
+
+		if copyErr != nil && copyErr != io.EOF {
+			return totalWritten, fmt.Errorf("failed to read chunk data: %w", copyErr)
+		}
+
+		totalWritten += written
+		offset += chunkLen
+	}
+
+	return totalWritten, nil
 }
 
 // Stat returns file info
